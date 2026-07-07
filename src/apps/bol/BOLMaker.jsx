@@ -15,6 +15,7 @@ import {
   PackageOpen,
   AlertTriangle,
   CheckCircle2,
+  Truck,
   Mail,
   Download,
   PenLine,
@@ -846,6 +847,29 @@ export default function BOLMaker() {
   const canSave =
     header.shipToName.trim() !== '' && lines.length > 0 && !saving;
 
+  async function toggleShipped() {
+    if (!editingId) return;
+    const newStatus = header.status === 'shipped' ? 'open' : 'shipped';
+    // update local state right away so the UI feels instant
+    setH('status', newStatus);
+    try {
+      const { error } = await supabase
+        .schema('shipping')
+        .from('bols')
+        .update({ status: newStatus })
+        .eq('id', editingId);
+      if (error) throw error;
+      await loadBols();
+      setMessage(
+        newStatus === 'shipped' ? 'Marked as shipped \u2713' : 'Reopened'
+      );
+    } catch (e) {
+      // roll back on failure
+      setH('status', header.status);
+      setMessage('Error updating status: ' + (e.message || 'unknown error'));
+    }
+  }
+
   async function deleteBol() {
     if (!editingId) return;
     setSaving(true);
@@ -1138,6 +1162,7 @@ export default function BOLMaker() {
                 setConfirmDelete(false);
                 await deleteBol();
               }}
+              onToggleShipped={toggleShipped}
             />
           )}
         </div>
@@ -1390,6 +1415,9 @@ function ListView({
                 </div>
                 <div style={styles.bolCustomer}>
                   {b.ship_to_name || '(no customer)'}
+                  {b.status === 'shipped' ? (
+                    <span style={styles.shippedChip}>Shipped</span>
+                  ) : null}
                 </div>
                 {b.sales_order_no ? (
                   <div style={styles.bolMeta}>Order: {b.sales_order_no}</div>
@@ -1536,17 +1564,14 @@ function LotAllocationModal({ line, lots, onClose, onSave }) {
       .reduce((s, a) => s + (Number(a.quantity) || 0), 0);
     const available = onHand - assignedSoFar;
     if (available <= 0) return;
-    // Never suggest more than the line still needs OR more than this lot has.
-    const lineRemaining = Math.max(remaining, 0);
-    const take = lineRemaining > 0
-      ? Math.min(available, lineRemaining)
-      : available;
+    // Start empty and let the user just type — the qty input's placeholder
+    // will show what's still needed on the line.
     setAllocs((prev) => [
       ...prev,
       {
         allocId: nextAllocId(),
         lot_no: lot.lot_no || '',
-        quantity: take,
+        quantity: '',
         pallet_number: '',
       },
     ]);
@@ -1664,6 +1689,9 @@ function LotAllocationModal({ line, lots, onClose, onSave }) {
                       type="number"
                       inputMode="decimal"
                       value={a.quantity}
+                      placeholder={
+                        remaining > 0 ? `need ${remaining}` : ''
+                      }
                       onChange={(e) =>
                         updateAlloc(a.allocId, 'quantity', e.target.value)
                       }
@@ -1772,6 +1800,7 @@ function EditView({
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
+  onToggleShipped,
 }) {
   const qa = header.qa;
   return (
@@ -2203,6 +2232,29 @@ function EditView({
           Email BOL
         </button>
       </div>
+
+      {editingId ? (
+        <button
+          style={
+            header.status === 'shipped'
+              ? styles.shippedBtn
+              : styles.markShippedBtn
+          }
+          onClick={onToggleShipped}
+        >
+          {header.status === 'shipped' ? (
+            <>
+              <CheckCircle2 size={18} />
+              Shipped &mdash; tap to reopen
+            </>
+          ) : (
+            <>
+              <Truck size={18} />
+              Mark as shipped
+            </>
+          )}
+        </button>
+      ) : null}
 
       {editingId ? (
         confirmDelete ? (
@@ -2736,6 +2788,9 @@ const styles = {
   deleteConfirmBox: { background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '12px', padding: '14px', marginTop: '16px' },
   deleteConfirmText: { fontSize: '14px', fontWeight: '600', color: '#9f1239', marginBottom: '12px', textAlign: 'center' },
   deleteBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#c8102e', color: '#fff', border: 'none', borderRadius: '12px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
+  markShippedBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', background: '#0f766e', color: '#fff', border: 'none', borderRadius: '12px', padding: '13px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '10px' },
+  shippedBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', background: '#ecfdf5', color: '#065f46', border: '1px solid #99f6e4', borderRadius: '12px', padding: '13px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '10px' },
+  shippedChip: { fontSize: '11px', fontWeight: '700', color: '#065f46', background: '#d1fae5', borderRadius: '999px', padding: '2px 10px', marginLeft: '8px' },
 
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 200 },
   modal: { background: '#fff', borderRadius: '16px 16px 0 0', width: '100%', maxWidth: '640px', maxHeight: '80vh', padding: '16px', display: 'flex', flexDirection: 'column' },
