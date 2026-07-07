@@ -52,15 +52,17 @@ const PALLET_WEIGHT_LB = 50;
 
 // ---------- BOL distribution config ----------
 // Default recipients when you tap "Email BOL".  Easy to edit.
-const DEFAULT_EMAIL_RECIPIENTS = ['caleb@elpinto.com', 'warehouse@elpinto.com'];
+const DEFAULT_EMAIL_RECIPIENTS = [
+  'caleb@elpinto.com',
+  'warehouse@elpinto.com',
+];
 // Whether a PDF auto-downloads every time a BOL is saved.
 const AUTO_DOWNLOAD_PDF_ON_SAVE = true;
 
 // Build a safe filename for the BOL PDF.
 function bolPdfFilename(header) {
   const parts = ['BOL'];
-  if (header.bolNumber)
-    parts.push(String(header.bolNumber).replace(/[^\w.-]+/g, '_'));
+  if (header.bolNumber) parts.push(String(header.bolNumber).replace(/[^\w.-]+/g, '_'));
   if (header.shipToName) {
     parts.push(
       String(header.shipToName)
@@ -153,11 +155,9 @@ async function generateBolPdf({ filename, downloadIt }) {
 function openEmailDraft({ to, subject, body }) {
   const url =
     'mailto:' +
-    encodeURIComponent((to || []).join(',')) +
-    '?subject=' +
-    encodeURIComponent(subject || '') +
-    '&body=' +
-    encodeURIComponent(body || '');
+    encodeURIComponent((to || []).join(','))
+    + '?subject=' + encodeURIComponent(subject || '')
+    + '&body=' + encodeURIComponent(body || '');
   window.location.href = url;
 }
 
@@ -382,7 +382,8 @@ export default function BOLMaker() {
   const [lotPickerLine, setLotPickerLine] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
-  const [signaturePad, setSignaturePad] = useState(null); // 'shipper' | 'driver' | null
+  const [signaturePad, setSignaturePad] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false); // 'shipper' | 'driver' | null
 
   useEffect(() => {
     loadBols();
@@ -845,6 +846,28 @@ export default function BOLMaker() {
   const canSave =
     header.shipToName.trim() !== '' && lines.length > 0 && !saving;
 
+  async function deleteBol() {
+    if (!editingId) return;
+    setSaving(true);
+    setMessage('');
+    try {
+      // bol_lines cascade-delete via the FK, so we only need to remove the BOL row.
+      const { error } = await supabase
+        .schema('shipping')
+        .from('bols')
+        .delete()
+        .eq('id', editingId);
+      if (error) throw error;
+      await loadBols();
+      setEditingId(null);
+      setView('list');
+    } catch (e) {
+      setMessage('Error deleting: ' + (e.message || 'unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveBol() {
     if (!canSave) return;
     setSaving(true);
@@ -942,7 +965,11 @@ export default function BOLMaker() {
             quantity: a.quantity === '' ? null : Number(a.quantity),
             uom: l.uom || null,
             weight:
-              i === 0 ? (l.weight === '' ? null : Number(l.weight)) : null,
+              i === 0
+                ? l.weight === ''
+                  ? null
+                  : Number(l.weight)
+                : null,
             pallet_number: a.pallet_number || null,
             freight_class: l.freight_class || null,
             nmfc: l.nmfc || null,
@@ -1104,6 +1131,13 @@ export default function BOLMaker() {
               saving={saving}
               message={message}
               editingId={editingId}
+              confirmDelete={confirmDelete}
+              onRequestDelete={() => setConfirmDelete(true)}
+              onCancelDelete={() => setConfirmDelete(false)}
+              onConfirmDelete={async () => {
+                setConfirmDelete(false);
+                await deleteBol();
+              }}
             />
           )}
         </div>
@@ -1140,9 +1174,7 @@ export default function BOLMaker() {
                   <button
                     key={it.item_no}
                     style={styles.itemRow}
-                    onClick={() =>
-                      addBlankLineForItem(it.item_no, it.description, '')
-                    }
+                    onClick={() => addBlankLineForItem(it.item_no, it.description, '')}
                   >
                     <span style={styles.itemNo}>{it.item_no}</span>
                     <span style={styles.itemDesc}>{it.description}</span>
@@ -1339,7 +1371,9 @@ function ListView({
         <div style={styles.list}>
           {bols.map((b) => {
             const lots = Array.from(
-              new Set((b.bol_lines || []).map((l) => l.lot_no).filter(Boolean))
+              new Set(
+                (b.bol_lines || []).map((l) => l.lot_no).filter(Boolean)
+              )
             );
             return (
               <button
@@ -1504,8 +1538,9 @@ function LotAllocationModal({ line, lots, onClose, onSave }) {
     if (available <= 0) return;
     // Never suggest more than the line still needs OR more than this lot has.
     const lineRemaining = Math.max(remaining, 0);
-    const take =
-      lineRemaining > 0 ? Math.min(available, lineRemaining) : available;
+    const take = lineRemaining > 0
+      ? Math.min(available, lineRemaining)
+      : available;
     setAllocs((prev) => [
       ...prev,
       {
@@ -1521,9 +1556,7 @@ function LotAllocationModal({ line, lots, onClose, onSave }) {
     setAllocs((prev) => {
       // For the pallet field, just write through.
       if (field !== 'quantity') {
-        return prev.map((a) =>
-          a.allocId === id ? { ...a, [field]: value } : a
-        );
+        return prev.map((a) => (a.allocId === id ? { ...a, [field]: value } : a));
       }
       // Quantity edits get clamped: not more than this lot's on-hand,
       // and not more than what the line still needs (counting OTHER allocs).
@@ -1575,13 +1608,17 @@ function LotAllocationModal({ line, lots, onClose, onSave }) {
   }, [lots]);
 
   const statusColor =
-    remaining === 0 ? '#15803d' : remaining > 0 ? '#a16207' : '#c8102e';
+    remaining === 0
+      ? '#15803d'
+      : remaining > 0
+        ? '#a16207'
+        : '#c8102e';
   const statusLabel =
     remaining === 0
       ? 'Fully assigned'
       : remaining > 0
-      ? `${remaining} cases unassigned`
-      : `${-remaining} cases over`;
+        ? `${remaining} cases unassigned`
+        : `${-remaining} cases over`;
 
   return (
     <div style={styles.overlay}>
@@ -1616,9 +1653,7 @@ function LotAllocationModal({ line, lots, onClose, onSave }) {
                     <div style={{ fontWeight: 700 }}>Lot {a.lot_no}</div>
                     {avail != null && (
                       <div style={{ fontSize: '11px', color: '#6b7280' }}>
-                        {avail >= 0
-                          ? `${avail} still available`
-                          : `${-avail} over inv`}
+                        {avail >= 0 ? `${avail} still available` : `${-avail} over inv`}
                       </div>
                     )}
                   </div>
@@ -1733,6 +1768,10 @@ function EditView({
   saving,
   message,
   editingId,
+  confirmDelete,
+  onRequestDelete,
+  onCancelDelete,
+  onConfirmDelete,
 }) {
   const qa = header.qa;
   return (
@@ -2081,75 +2120,23 @@ function EditView({
         <div style={styles.sectionTitle}>QA Verification</div>
         <div style={styles.twoCol}>
           <div style={{ flex: 1 }}>
-            <QAField
-              label="Condition of Trailer"
-              value={qa.conditionOfTrailer}
-              onChange={(v) => setQA('conditionOfTrailer', v)}
-            />
-            <QAField
-              label="Odor?"
-              value={qa.odor}
-              onChange={(v) => setQA('odor', v)}
-            />
-            <QAField
-              label="Possible Contamination Reason"
-              value={qa.possibleContaminationReason}
-              onChange={(v) => setQA('possibleContaminationReason', v)}
-            />
-            <QAField
-              label="Items Rejected Reason"
-              value={qa.itemsRejectedReason}
-              onChange={(v) => setQA('itemsRejectedReason', v)}
-            />
-            <QAField
-              label="Items Placed on Hold Reason"
-              value={qa.itemsOnHoldReason}
-              onChange={(v) => setQA('itemsOnHoldReason', v)}
-            />
-            <QAField
-              label="Damaged Items While Loading"
-              value={qa.damagedWhileLoading}
-              onChange={(v) => setQA('damagedWhileLoading', v)}
-            />
+            <QAField label="Condition of Trailer" value={qa.conditionOfTrailer} onChange={(v) => setQA('conditionOfTrailer', v)} />
+            <QAField label="Odor?" value={qa.odor} onChange={(v) => setQA('odor', v)} />
+            <QAField label="Possible Contamination Reason" value={qa.possibleContaminationReason} onChange={(v) => setQA('possibleContaminationReason', v)} />
+            <QAField label="Items Rejected Reason" value={qa.itemsRejectedReason} onChange={(v) => setQA('itemsRejectedReason', v)} />
+            <QAField label="Items Placed on Hold Reason" value={qa.itemsOnHoldReason} onChange={(v) => setQA('itemsOnHoldReason', v)} />
+            <QAField label="Damaged Items While Loading" value={qa.damagedWhileLoading} onChange={(v) => setQA('damagedWhileLoading', v)} />
           </div>
           <div style={{ flex: 1 }}>
-            <QAField
-              label="Temp Logger"
-              value={qa.tempLogger}
-              onChange={(v) => setQA('tempLogger', v)}
-            />
-            <QAField
-              label="Rodent Excreta Found"
-              value={qa.rodentExcreta}
-              onChange={(v) => setQA('rodentExcreta', v)}
-            />
-            <QAField
-              label="Possible Contamination"
-              value={qa.possibleContamination}
-              onChange={(v) => setQA('possibleContamination', v)}
-            />
-            <QAField
-              label="Any Items Rejected?"
-              value={qa.anyItemsRejected}
-              onChange={(v) => setQA('anyItemsRejected', v)}
-            />
-            <QAField
-              label="Any Items Placed On Hold?"
-              value={qa.anyItemsOnHold}
-              onChange={(v) => setQA('anyItemsOnHold', v)}
-            />
-            <QAField
-              label="Damaged Items Found On Trailer?"
-              value={qa.damagedOnTrailer}
-              onChange={(v) => setQA('damagedOnTrailer', v)}
-            />
+            <QAField label="Temp Logger" value={qa.tempLogger} onChange={(v) => setQA('tempLogger', v)} />
+            <QAField label="Rodent Excreta Found" value={qa.rodentExcreta} onChange={(v) => setQA('rodentExcreta', v)} />
+            <QAField label="Possible Contamination" value={qa.possibleContamination} onChange={(v) => setQA('possibleContamination', v)} />
+            <QAField label="Any Items Rejected?" value={qa.anyItemsRejected} onChange={(v) => setQA('anyItemsRejected', v)} />
+            <QAField label="Any Items Placed On Hold?" value={qa.anyItemsOnHold} onChange={(v) => setQA('anyItemsOnHold', v)} />
+            <QAField label="Damaged Items Found On Trailer?" value={qa.damagedOnTrailer} onChange={(v) => setQA('damagedOnTrailer', v)} />
           </div>
         </div>
-        <QAField
-          label="Comments"
-          value={qa.comments}
-          onChange={(v) => setQA('comments', v)}
-        />
+        <QAField label="Comments" value={qa.comments} onChange={(v) => setQA('comments', v)} />
       </div>
 
       {/* Signatures */}
@@ -2216,6 +2203,29 @@ function EditView({
           Email BOL
         </button>
       </div>
+
+      {editingId ? (
+        confirmDelete ? (
+          <div style={styles.deleteConfirmBox}>
+            <div style={styles.deleteConfirmText}>
+              Delete this BOL permanently? This can't be undone.
+            </div>
+            <div style={styles.actionRow}>
+              <button style={styles.altBtn} onClick={onCancelDelete}>
+                Cancel
+              </button>
+              <button style={styles.deleteBtn} onClick={onConfirmDelete}>
+                <Trash2 size={18} />
+                Yes, delete BOL
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button style={styles.deleteLinkBtn} onClick={onRequestDelete}>
+            Delete this BOL
+          </button>
+        )
+      ) : null}
       <div style={{ height: '40px' }} />
     </>
   );
@@ -2490,29 +2500,11 @@ function BolDocument({ header, lines, totals }) {
               <div style={styles.infoAddr}>{header.shipFromAddress}</div>
             </td>
           </tr>
-          <InfoPair
-            shaded
-            l={['Overall Weight in LB:', overallWeight]}
-            r={['Customer PO Numbers:', header.customerPo]}
-          />
-          <InfoPair
-            l={['Carrier Name:', header.carrierName]}
-            r={['Trailer #:', header.trailerNumber]}
-          />
-          <InfoPair
-            shaded
-            l={['Seal #:', header.sealNumber]}
-            r={['Temp Logger #:', header.tempLoggerNumber]}
-          />
-          <InfoPair
-            l={['CHEP Pallet Count:', header.chepPalletCount]}
-            r={['Truck Temp:', header.truckTemp]}
-          />
-          <InfoPair
-            shaded
-            l={['Total Cases:', totals.cases]}
-            r={['Total Pallets:', totals.pallets]}
-          />
+          <InfoPair shaded l={['Overall Weight in LB:', overallWeight]} r={['Customer PO Numbers:', header.customerPo]} />
+          <InfoPair l={['Carrier Name:', header.carrierName]} r={['Trailer #:', header.trailerNumber]} />
+          <InfoPair shaded l={['Seal #:', header.sealNumber]} r={['Temp Logger #:', header.tempLoggerNumber]} />
+          <InfoPair l={['CHEP Pallet Count:', header.chepPalletCount]} r={['Truck Temp:', header.truckTemp]} />
+          <InfoPair shaded l={['Total Cases:', totals.cases]} r={['Total Pallets:', totals.pallets]} />
         </tbody>
       </table>
 
@@ -2573,8 +2565,7 @@ function BolDocument({ header, lines, totals }) {
               <div style={styles.signLabel}>
                 Shipper Signature
                 {header.shipperSignedAt
-                  ? ' \u2014 ' +
-                    new Date(header.shipperSignedAt).toLocaleString()
+                  ? ' \u2014 ' + new Date(header.shipperSignedAt).toLocaleString()
                   : ''}
               </div>
             </td>
@@ -2591,8 +2582,7 @@ function BolDocument({ header, lines, totals }) {
               <div style={styles.signLabel}>
                 Driver Signature
                 {header.driverSignedAt
-                  ? ' \u2014 ' +
-                    new Date(header.driverSignedAt).toLocaleString()
+                  ? ' \u2014 ' + new Date(header.driverSignedAt).toLocaleString()
                   : ''}
               </div>
             </td>
@@ -2603,41 +2593,13 @@ function BolDocument({ header, lines, totals }) {
       <div style={styles.bolHeading}>QA Verification</div>
       <table style={styles.infoTable}>
         <tbody>
-          <InfoPair
-            shaded
-            l={['Truck Temperature:', header.truckTemp]}
-            r={['Temp Logger:', qa.tempLogger]}
-          />
-          <InfoPair
-            l={['Condition of Trailer:', qa.conditionOfTrailer]}
-            r={['Rodent Excreta Found:', qa.rodentExcreta]}
-          />
-          <InfoPair
-            shaded
-            l={['Odor?:', qa.odor]}
-            r={['Possible Contamination:', qa.possibleContamination]}
-          />
-          <InfoPair
-            l={[
-              'Possible Contamination Reason:',
-              qa.possibleContaminationReason,
-            ]}
-            r={['Any Items Rejected?:', qa.anyItemsRejected]}
-          />
-          <InfoPair
-            shaded
-            l={['Items Rejected Reason:', qa.itemsRejectedReason]}
-            r={['Any Items Placed On Hold?:', qa.anyItemsOnHold]}
-          />
-          <InfoPair
-            l={['Items Placed on Hold Reason:', qa.itemsOnHoldReason]}
-            r={['Damaged Items Found On Trailer?:', qa.damagedOnTrailer]}
-          />
-          <InfoPair
-            shaded
-            l={['Damaged Items While Loading:', qa.damagedWhileLoading]}
-            r={['Comments:', qa.comments]}
-          />
+          <InfoPair shaded l={['Truck Temperature:', header.truckTemp]} r={['Temp Logger:', qa.tempLogger]} />
+          <InfoPair l={['Condition of Trailer:', qa.conditionOfTrailer]} r={['Rodent Excreta Found:', qa.rodentExcreta]} />
+          <InfoPair shaded l={['Odor?:', qa.odor]} r={['Possible Contamination:', qa.possibleContamination]} />
+          <InfoPair l={['Possible Contamination Reason:', qa.possibleContaminationReason]} r={['Any Items Rejected?:', qa.anyItemsRejected]} />
+          <InfoPair shaded l={['Items Rejected Reason:', qa.itemsRejectedReason]} r={['Any Items Placed On Hold?:', qa.anyItemsOnHold]} />
+          <InfoPair l={['Items Placed on Hold Reason:', qa.itemsOnHoldReason]} r={['Damaged Items Found On Trailer?:', qa.damagedOnTrailer]} />
+          <InfoPair shaded l={['Damaged Items While Loading:', qa.damagedWhileLoading]} r={['Comments:', qa.comments]} />
         </tbody>
       </table>
 
@@ -2699,718 +2661,136 @@ const printCss = `
 
 // ---------- styles ----------
 const styles = {
-  container: {
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: '#f8f8f8',
-  },
-  header: {
-    backgroundColor: '#c8102e',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
-  },
-  headerInner: {
-    maxWidth: '820px',
-    margin: '0 auto',
-    padding: '12px 16px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    background: 'rgba(255,255,255,0.15)',
-    border: 'none',
-    borderRadius: '8px',
-    padding: '6px 10px',
-    cursor: 'pointer',
-    minHeight: '36px',
-  },
+  container: { minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8f8f8' },
+  header: { backgroundColor: '#c8102e', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', position: 'sticky', top: 0, zIndex: 100 },
+  headerInner: { maxWidth: '820px', margin: '0 auto', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  backButton: { display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', minHeight: '36px' },
   backText: { fontSize: '13px', color: '#fff', fontWeight: '500' },
   titleArea: { display: 'flex', alignItems: 'center', gap: '8px' },
   headerTitle: { fontSize: '18px', fontWeight: '700', color: '#fff' },
-  content: {
-    flex: 1,
-    maxWidth: '820px',
-    width: '100%',
-    margin: '0 auto',
-    padding: '20px 16px',
-  },
+  content: { flex: 1, maxWidth: '820px', width: '100%', margin: '0 auto', padding: '20px 16px' },
 
-  listTopRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '12px',
-  },
+  listTopRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' },
   pageTitle: { fontSize: '22px', fontWeight: '700' },
-  primaryBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    background: '#c8102e',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '10px',
-    padding: '10px 14px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
+  primaryBtn: { display: 'flex', alignItems: 'center', gap: '6px', background: '#c8102e', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 14px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
   bcBar: { display: 'flex', gap: '8px', marginBottom: '12px' },
-  bcPrimaryBtn: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    background: '#0f766e',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '10px',
-    padding: '12px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  bcSecondaryBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '6px',
-    background: '#fff',
-    color: '#0f766e',
-    border: '1px solid #99f6e4',
-    borderRadius: '10px',
-    padding: '12px 14px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  bcCount: {
-    background: 'rgba(255,255,255,0.25)',
-    borderRadius: '999px',
-    padding: '1px 8px',
-    fontSize: '12px',
-    fontWeight: '700',
-  },
-  importHelp: {
-    fontSize: '13px',
-    color: '#6b7280',
-    marginBottom: '14px',
-    lineHeight: 1.4,
-  },
-  fileLabel: {
-    display: 'block',
-    fontSize: '13px',
-    fontWeight: '600',
-    color: '#374151',
-    margin: '10px 0 6px',
-  },
+  bcPrimaryBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#0f766e', color: '#fff', border: 'none', borderRadius: '10px', padding: '12px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  bcSecondaryBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#fff', color: '#0f766e', border: '1px solid #99f6e4', borderRadius: '10px', padding: '12px 14px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  bcCount: { background: 'rgba(255,255,255,0.25)', borderRadius: '999px', padding: '1px 8px', fontSize: '12px', fontWeight: '700' },
+  importHelp: { fontSize: '13px', color: '#6b7280', marginBottom: '14px', lineHeight: 1.4 },
+  fileLabel: { display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', margin: '10px 0 6px' },
   fileInput: { width: '100%', fontSize: '14px' },
-  filterToggle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    background: 'transparent',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '10px 2px',
-    fontSize: '14px',
-    fontWeight: '600',
-    color: '#374151',
-    width: '100%',
-  },
-  checkbox: {
-    width: '20px',
-    height: '20px',
-    borderRadius: '6px',
-    border: '1px solid #d1d5db',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '13px',
-    color: '#fff',
-    background: '#fff',
-  },
+  filterToggle: { display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', cursor: 'pointer', padding: '10px 2px', fontSize: '14px', fontWeight: '600', color: '#374151', width: '100%' },
+  checkbox: { width: '20px', height: '20px', borderRadius: '6px', border: '1px solid #d1d5db', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', color: '#fff', background: '#fff' },
   checkboxOn: { background: '#0f766e', borderColor: '#0f766e' },
-  filterCount: {
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#9ca3af',
-    marginLeft: 'auto',
-  },
+  filterCount: { fontSize: '12px', fontWeight: '600', color: '#9ca3af', marginLeft: 'auto' },
   hint: { fontSize: '12px', color: '#9ca3af', margin: '6px 2px 16px' },
-  empty: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    padding: '40px',
-  },
+  empty: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px' },
   list: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  bolCard: {
-    background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '14px',
-    textAlign: 'left',
-    cursor: 'pointer',
-    width: '100%',
-  },
-  bolCardTop: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
+  bolCard: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '14px', textAlign: 'left', cursor: 'pointer', width: '100%' },
+  bolCardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   bolNumber: { fontSize: '15px', fontWeight: '700', color: '#c8102e' },
   bolDate: { fontSize: '13px', color: '#6b7280' },
   bolCustomer: { fontSize: '15px', fontWeight: '600', marginTop: '4px' },
   bolMeta: { fontSize: '13px', color: '#6b7280', marginTop: '2px' },
   lotTags: { display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '8px' },
-  lotTag: {
-    fontSize: '11px',
-    fontWeight: '600',
-    color: '#374151',
-    background: '#f3f4f6',
-    borderRadius: '6px',
-    padding: '2px 8px',
-  },
+  lotTag: { fontSize: '11px', fontWeight: '600', color: '#374151', background: '#f3f4f6', borderRadius: '6px', padding: '2px 8px' },
 
-  searchWrap: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    background: '#fff',
-    border: '1px solid #d1d5db',
-    borderRadius: '10px',
-    padding: '10px 12px',
-  },
-  searchInput: {
-    flex: 1,
-    border: 'none',
-    outline: 'none',
-    fontSize: '16px',
-    background: 'transparent',
-  },
-  section: {
-    background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '16px',
-    marginBottom: '14px',
-  },
-  sectionTitle: {
-    fontSize: '13px',
-    fontWeight: '700',
-    color: '#374151',
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    marginBottom: '10px',
-  },
-  fieldLabel: {
-    display: 'block',
-    fontSize: '13px',
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: '6px',
-    marginTop: '12px',
-  },
-  input: {
-    width: '100%',
-    border: '1px solid #d1d5db',
-    borderRadius: '10px',
-    padding: '11px 13px',
-    fontSize: '16px',
-    boxSizing: 'border-box',
-    marginBottom: '4px',
-  },
-  textarea: {
-    width: '100%',
-    border: '1px solid #d1d5db',
-    borderRadius: '10px',
-    padding: '11px 13px',
-    fontSize: '15px',
-    boxSizing: 'border-box',
-    minHeight: '60px',
-    resize: 'vertical',
-    fontFamily: 'inherit',
-  },
+  searchWrap: { display: 'flex', alignItems: 'center', gap: '8px', background: '#fff', border: '1px solid #d1d5db', borderRadius: '10px', padding: '10px 12px' },
+  searchInput: { flex: 1, border: 'none', outline: 'none', fontSize: '16px', background: 'transparent' },
+  section: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px', marginBottom: '14px' },
+  sectionTitle: { fontSize: '13px', fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' },
+  fieldLabel: { display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px', marginTop: '12px' },
+  input: { width: '100%', border: '1px solid #d1d5db', borderRadius: '10px', padding: '11px 13px', fontSize: '16px', boxSizing: 'border-box', marginBottom: '4px' },
+  textarea: { width: '100%', border: '1px solid #d1d5db', borderRadius: '10px', padding: '11px 13px', fontSize: '15px', boxSizing: 'border-box', minHeight: '60px', resize: 'vertical', fontFamily: 'inherit' },
   twoCol: { display: 'flex', gap: '12px', alignItems: 'flex-end' },
   toggleRow: { display: 'flex', gap: '8px' },
-  toggleBtn: {
-    flex: 1,
-    background: '#fff',
-    border: '1px solid #d1d5db',
-    borderRadius: '10px',
-    padding: '10px',
-    fontSize: '14px',
-    fontWeight: '500',
-    color: '#374151',
-    cursor: 'pointer',
-  },
-  toggleActive: {
-    background: '#c8102e',
-    borderColor: '#c8102e',
-    color: '#fff',
-  },
+  toggleBtn: { flex: 1, background: '#fff', border: '1px solid #d1d5db', borderRadius: '10px', padding: '10px', fontSize: '14px', fontWeight: '500', color: '#374151', cursor: 'pointer' },
+  toggleActive: { background: '#c8102e', borderColor: '#c8102e', color: '#fff' },
 
-  lineHeadRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '10px',
-  },
-  smallBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    background: '#fff1f2',
-    color: '#c8102e',
-    border: '1px solid #fecdd3',
-    borderRadius: '8px',
-    padding: '7px 12px',
-    fontSize: '13px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  lineCard: {
-    border: '1px solid #e5e7eb',
-    borderRadius: '10px',
-    padding: '12px',
-    marginBottom: '10px',
-    background: '#fafafa',
-  },
-  lineCardTop: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  chooseLotBtn: {
-    width: '100%',
-    marginTop: '8px',
-    background: '#fff1f2',
-    color: '#c8102e',
-    border: '1px dashed #fca5a5',
-    borderRadius: '8px',
-    padding: '9px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    textAlign: 'center',
-  },
-  chooseLotBtnSet: {
-    background: '#ecfdf5',
-    color: '#0f766e',
-    border: '1px solid #99f6e4',
-  },
-  chooseLotBtnWarn: {
-    background: '#fffbeb',
-    color: '#a16207',
-    border: '1px solid #fde68a',
-  },
-  warnText: {
-    marginTop: '6px',
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#a16207',
-  },
+  lineHeadRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' },
+  smallBtn: { display: 'flex', alignItems: 'center', gap: '4px', background: '#fff1f2', color: '#c8102e', border: '1px solid #fecdd3', borderRadius: '8px', padding: '7px 12px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
+  lineCard: { border: '1px solid #e5e7eb', borderRadius: '10px', padding: '12px', marginBottom: '10px', background: '#fafafa' },
+  lineCardTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  chooseLotBtn: { width: '100%', marginTop: '8px', background: '#fff1f2', color: '#c8102e', border: '1px dashed #fca5a5', borderRadius: '8px', padding: '9px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' },
+  chooseLotBtnSet: { background: '#ecfdf5', color: '#0f766e', border: '1px solid #99f6e4' },
+  chooseLotBtnWarn: { background: '#fffbeb', color: '#a16207', border: '1px solid #fde68a' },
+  warnText: { marginTop: '6px', fontSize: '12px', fontWeight: '600', color: '#a16207' },
   itemNo: { fontSize: '15px', fontWeight: '700', color: '#1a1a1a' },
   itemDesc: { fontSize: '13px', color: '#6b7280', marginTop: '2px' },
-  lineGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))',
-    gap: '8px',
-    marginTop: '10px',
-  },
+  lineGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '8px', marginTop: '10px' },
   lineField: { display: 'flex', flexDirection: 'column' },
-  lineFieldLabel: {
-    fontSize: '11px',
-    fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: '3px',
-  },
-  lineInput: {
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    padding: '8px 10px',
-    fontSize: '15px',
-    boxSizing: 'border-box',
-    width: '100%',
-  },
-  totalsRow: {
-    display: 'flex',
-    gap: '20px',
-    justifyContent: 'flex-end',
-    fontSize: '14px',
-    color: '#374151',
-    marginTop: '8px',
-    paddingTop: '10px',
-    borderTop: '1px solid #e5e7eb',
-  },
+  lineFieldLabel: { fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '3px' },
+  lineInput: { border: '1px solid #d1d5db', borderRadius: '8px', padding: '8px 10px', fontSize: '15px', boxSizing: 'border-box', width: '100%' },
+  totalsRow: { display: 'flex', gap: '20px', justifyContent: 'flex-end', fontSize: '14px', color: '#374151', marginTop: '8px', paddingTop: '10px', borderTop: '1px solid #e5e7eb' },
 
   message: { fontSize: '14px', fontWeight: '600', marginBottom: '10px' },
-  bannerWarn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    background: '#fffbeb',
-    color: '#a16207',
-    border: '1px solid #fde68a',
-    borderRadius: '10px',
-    padding: '10px 12px',
-    fontSize: '13px',
-    fontWeight: '600',
-    marginBottom: '10px',
-  },
+  bannerWarn: { display: 'flex', alignItems: 'center', gap: '8px', background: '#fffbeb', color: '#a16207', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontWeight: '600', marginBottom: '10px' },
   actionRow: { display: 'flex', gap: '10px' },
-  saveBtn: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    background: '#c8102e',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '15px',
-    fontSize: '16px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  printBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    background: '#fff',
-    color: '#374151',
-    border: '1px solid #d1d5db',
-    borderRadius: '12px',
-    padding: '15px 20px',
-    fontSize: '16px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
+  saveBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#c8102e', color: '#fff', border: 'none', borderRadius: '12px', padding: '15px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' },
+  printBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '12px', padding: '15px 20px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' },
   btnDisabled: { background: '#d1d5db', cursor: 'not-allowed' },
-  altBtn: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    background: '#fff',
-    color: '#374151',
-    border: '1px solid #d1d5db',
-    borderRadius: '12px',
-    padding: '12px',
-    fontSize: '15px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    marginTop: '8px',
-  },
-  emailBtn: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    background: '#0f766e',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '12px',
-    fontSize: '15px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    marginTop: '8px',
-  },
+  altBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '12px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' },
+  emailBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#0f766e', color: '#fff', border: 'none', borderRadius: '12px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' },
+  deleteLinkBtn: { display: 'block', width: '100%', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', padding: '20px 8px 8px', textAlign: 'center', textDecoration: 'underline' },
+  deleteConfirmBox: { background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '12px', padding: '14px', marginTop: '16px' },
+  deleteConfirmText: { fontSize: '14px', fontWeight: '600', color: '#9f1239', marginBottom: '12px', textAlign: 'center' },
+  deleteBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#c8102e', color: '#fff', border: 'none', borderRadius: '12px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
 
-  overlay: {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(0,0,0,0.4)',
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    zIndex: 200,
-  },
-  modal: {
-    background: '#fff',
-    borderRadius: '16px 16px 0 0',
-    width: '100%',
-    maxWidth: '640px',
-    maxHeight: '80vh',
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  modalHead: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '12px',
-  },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 200 },
+  modal: { background: '#fff', borderRadius: '16px 16px 0 0', width: '100%', maxWidth: '640px', maxHeight: '80vh', padding: '16px', display: 'flex', flexDirection: 'column' },
+  modalHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' },
   modalTitle: { fontSize: '17px', fontWeight: '700' },
-  iconBtn: {
-    background: 'transparent',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '6px',
-  },
-  modalList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-    overflowY: 'auto',
-    maxHeight: '40vh',
-  },
-  itemRow: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: '2px',
-    background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '10px',
-    padding: '12px 14px',
-    cursor: 'pointer',
-    textAlign: 'left',
-    width: '100%',
-  },
+  iconBtn: { background: 'transparent', border: 'none', cursor: 'pointer', padding: '6px' },
+  modalList: { display: 'flex', flexDirection: 'column', gap: '6px', overflowY: 'auto', maxHeight: '40vh' },
+  itemRow: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '12px 14px', cursor: 'pointer', textAlign: 'left', width: '100%' },
   itemRowBlocked: { opacity: 0.5, cursor: 'not-allowed' },
-  outOfStock: {
-    marginLeft: '8px',
-    fontSize: '10px',
-    fontWeight: 700,
-    color: '#c8102e',
-    background: '#fee2e2',
-    borderRadius: '4px',
-    padding: '2px 6px',
-  },
-  allocRow: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    padding: '8px',
-    background: '#fafafa',
-    borderRadius: '8px',
-    marginBottom: '6px',
-  },
+  outOfStock: { marginLeft: '8px', fontSize: '10px', fontWeight: 700, color: '#c8102e', background: '#fee2e2', borderRadius: '4px', padding: '2px 6px' },
+  allocRow: { display: 'flex', gap: '8px', alignItems: 'center', padding: '8px', background: '#fafafa', borderRadius: '8px', marginBottom: '6px' },
   allocField: { display: 'flex', flexDirection: 'column' },
   allocLabel: { fontSize: '10px', fontWeight: 700, color: '#6b7280' },
-  allocInput: {
-    width: '80px',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    padding: '6px 8px',
-    fontSize: '14px',
-  },
-  linkBtn: {
-    background: 'transparent',
-    border: 'none',
-    color: '#c8102e',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    padding: '10px',
-    textAlign: 'left',
-  },
+  allocInput: { width: '80px', border: '1px solid #d1d5db', borderRadius: '6px', padding: '6px 8px', fontSize: '14px' },
+  linkBtn: { background: 'transparent', border: 'none', color: '#c8102e', fontSize: '14px', fontWeight: '600', cursor: 'pointer', padding: '10px', textAlign: 'left' },
 
   // ----- printable El Pinto BOL -----
-  bolPage: {
-    width: '7.5in',
-    color: '#000',
-    fontFamily: 'Georgia, "Times New Roman", serif',
-    fontSize: '11px',
-  },
+  bolPage: { width: '7.5in', color: '#000', fontFamily: 'Georgia, "Times New Roman", serif', fontSize: '11px' },
   bolTitle: { fontSize: '20px', fontWeight: '700' },
   bolTitleDate: { marginLeft: '24px' },
   bolDueDate: { fontSize: '18px', fontWeight: '700', marginBottom: '4px' },
-  bolSalesOrder: {
-    fontSize: '14px',
-    fontWeight: '600',
-    marginBottom: '10px',
-    color: '#444',
-  },
+  bolSalesOrder: { fontSize: '14px', fontWeight: '600', marginBottom: '10px', color: '#444' },
 
-  infoTable: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    border: '1px solid #999',
-    marginBottom: '12px',
-    tableLayout: 'fixed',
-  },
-  infoCellTall: {
-    border: '1px solid #ccc',
-    padding: '6px 8px',
-    verticalAlign: 'top',
-    width: '50%',
-  },
-  infoCell: {
-    border: '1px solid #ccc',
-    padding: '4px 8px',
-    verticalAlign: 'top',
-    width: '50%',
-    fontSize: '11px',
-  },
+  infoTable: { width: '100%', borderCollapse: 'collapse', border: '1px solid #999', marginBottom: '12px', tableLayout: 'fixed' },
+  infoCellTall: { border: '1px solid #ccc', padding: '6px 8px', verticalAlign: 'top', width: '50%' },
+  infoCell: { border: '1px solid #ccc', padding: '4px 8px', verticalAlign: 'top', width: '50%', fontSize: '11px' },
   infoLabel: { fontWeight: '700' },
   infoVal: {},
   infoStrong: { fontWeight: '700', fontSize: '12px', marginTop: '2px' },
   infoAddr: { fontSize: '11px', whiteSpace: 'pre-wrap' },
 
   bolHeading: { fontSize: '17px', fontWeight: '700', margin: '14px 0 6px' },
-  goodsTable: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginBottom: '10px',
-  },
-  gTh: {
-    border: '1px solid #999',
-    padding: '5px 6px',
-    textAlign: 'left',
-    background: '#f0f0f0',
-    fontSize: '10px',
-    fontFamily: 'Arial, sans-serif',
-  },
-  gThR: {
-    border: '1px solid #999',
-    padding: '5px 6px',
-    textAlign: 'right',
-    background: '#f0f0f0',
-    fontSize: '10px',
-    fontFamily: 'Arial, sans-serif',
-  },
-  gTd: {
-    border: '1px solid #ccc',
-    padding: '4px 6px',
-    fontSize: '11px',
-    fontFamily: 'Arial, sans-serif',
-  },
-  gTdR: {
-    border: '1px solid #ccc',
-    padding: '4px 6px',
-    fontSize: '11px',
-    textAlign: 'right',
-    fontFamily: 'Arial, sans-serif',
-  },
+  goodsTable: { width: '100%', borderCollapse: 'collapse', marginBottom: '10px' },
+  gTh: { border: '1px solid #999', padding: '5px 6px', textAlign: 'left', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  gThR: { border: '1px solid #999', padding: '5px 6px', textAlign: 'right', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  gTd: { border: '1px solid #ccc', padding: '4px 6px', fontSize: '11px', fontFamily: 'Arial, sans-serif' },
+  gTdR: { border: '1px solid #ccc', padding: '4px 6px', fontSize: '11px', textAlign: 'right', fontFamily: 'Arial, sans-serif' },
 
-  warning: {
-    fontWeight: '700',
-    fontSize: '15px',
-    margin: '14px 0',
-    lineHeight: 1.3,
-  },
+  warning: { fontWeight: '700', fontSize: '15px', margin: '14px 0', lineHeight: 1.3 },
 
-  legalNote: {
-    border: '1px solid #999',
-    borderBottom: 'none',
-    padding: '4px 6px',
-    fontSize: '10px',
-    fontFamily: 'Arial, sans-serif',
-  },
-  legalTable: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginBottom: '12px',
-    tableLayout: 'fixed',
-  },
-  legalCell: {
-    border: '1px solid #999',
-    padding: '6px',
-    fontSize: '9px',
-    verticalAlign: 'top',
-    width: '50%',
-    fontFamily: 'Arial, sans-serif',
-  },
-  signCell: {
-    border: '1px solid #999',
-    padding: '6px',
-    verticalAlign: 'top',
-    width: '50%',
-  },
+  legalNote: { border: '1px solid #999', borderBottom: 'none', padding: '4px 6px', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  legalTable: { width: '100%', borderCollapse: 'collapse', marginBottom: '12px', tableLayout: 'fixed' },
+  legalCell: { border: '1px solid #999', padding: '6px', fontSize: '9px', verticalAlign: 'top', width: '50%', fontFamily: 'Arial, sans-serif' },
+  signCell: { border: '1px solid #999', padding: '6px', verticalAlign: 'top', width: '50%' },
   signSpace: { height: '54px' },
   signLabel: { fontSize: '9px', fontFamily: 'Arial, sans-serif' },
-  printSigImg: {
-    display: 'block',
-    maxHeight: '54px',
-    maxWidth: '100%',
-    objectFit: 'contain',
-  },
+  printSigImg: { display: 'block', maxHeight: '54px', maxWidth: '100%', objectFit: 'contain' },
 
   // ----- digital signature -----
-  sigPadFrame: {
-    background: '#fff',
-    border: '2px dashed #c8102e',
-    borderRadius: '10px',
-    padding: '0',
-    overflow: 'hidden',
-  },
-  sigPadCanvas: {
-    display: 'block',
-    width: '100%',
-    height: '200px',
-    touchAction: 'none',
-    background: '#fff',
-    cursor: 'crosshair',
-  },
-  sigBox: {
-    flex: 1,
-    background: '#fafafa',
-    border: '1px solid #e5e7eb',
-    borderRadius: '10px',
-    padding: '12px',
-    minWidth: 0,
-  },
-  sigBoxLabel: {
-    fontSize: '12px',
-    fontWeight: '700',
-    color: '#374151',
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    marginBottom: '8px',
-  },
-  sigImage: {
-    display: 'block',
-    width: '100%',
-    maxHeight: '80px',
-    objectFit: 'contain',
-    background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '6px',
-  },
+  sigPadFrame: { background: '#fff', border: '2px dashed #c8102e', borderRadius: '10px', padding: '0', overflow: 'hidden' },
+  sigPadCanvas: { display: 'block', width: '100%', height: '200px', touchAction: 'none', background: '#fff', cursor: 'crosshair' },
+  sigBox: { flex: 1, background: '#fafafa', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '12px', minWidth: 0 },
+  sigBoxLabel: { fontSize: '12px', fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' },
+  sigImage: { display: 'block', width: '100%', maxHeight: '80px', objectFit: 'contain', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '6px' },
   sigSignedAt: { fontSize: '11px', color: '#6b7280', marginTop: '6px' },
-  sigSignBtn: {
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '6px',
-    background: '#fff',
-    color: '#c8102e',
-    border: '1px dashed #fca5a5',
-    borderRadius: '8px',
-    padding: '24px 12px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  sigClearBtn: {
-    marginTop: '6px',
-    width: '100%',
-    background: 'transparent',
-    color: '#6b7280',
-    border: 'none',
-    fontSize: '12px',
-    cursor: 'pointer',
-    textDecoration: 'underline',
-  },
+  sigSignBtn: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#fff', color: '#c8102e', border: '1px dashed #fca5a5', borderRadius: '8px', padding: '24px 12px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  sigClearBtn: { marginTop: '6px', width: '100%', background: 'transparent', color: '#6b7280', border: 'none', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' },
 };
