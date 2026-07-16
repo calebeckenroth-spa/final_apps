@@ -208,6 +208,10 @@ export default function HistoricalBOLs() {
     comments: '',
   });
   const [notes, setNotes] = useState('');
+  // Editable ship-to override — pre-filled from CSV, but the user can type
+  // over these for a specific reconstruction. What's here is what gets
+  // printed and saved.
+  const [editShipTo, setEditShipTo] = useState({ name: '', address: '' });
 
   useEffect(() => {
     loadShipments();
@@ -447,6 +451,10 @@ export default function HistoricalBOLs() {
     });
 
     setSelectedLines(composed);
+    setEditShipTo({
+      name: hdr.ship_to_name || '',
+      address: hdr.ship_to_address || '',
+    });
     setView('edit');
   }
 
@@ -468,8 +476,8 @@ export default function HistoricalBOLs() {
         status: 'shipped',
         ship_from_name: 'El Pinto Foods LLC',
         ship_from_address: '10500 4th St NW\nAlbuquerque, NM 87114',
-        ship_to_name: selected.ship_to_name,
-        ship_to_address: selected.ship_to_address,
+        ship_to_name: editShipTo.name || selected.ship_to_name,
+        ship_to_address: editShipTo.address || selected.ship_to_address,
         bill_to_name: selected.bill_to_name,
         bill_to_address: selected.bill_to_address,
         customer_po: selected.customer_po,
@@ -691,6 +699,8 @@ export default function HistoricalBOLs() {
                 setQa={setQa}
                 notes={notes}
                 setNotes={setNotes}
+                editShipTo={editShipTo}
+                setEditShipTo={setEditShipTo}
                 message={message}
                 onSave={saveReconstruction}
                 onPrint={handlePrint}
@@ -719,6 +729,7 @@ export default function HistoricalBOLs() {
             totalCases={totalCases}
             qa={qa}
             notes={notes}
+            editShipTo={editShipTo}
           />
         </div>
       )}
@@ -809,6 +820,8 @@ function EditView({
   setQa,
   notes,
   setNotes,
+  editShipTo,
+  setEditShipTo,
   message,
   onSave,
   onPrint,
@@ -836,9 +849,42 @@ function EditView({
       </div>
 
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Ship To</div>
-        <div style={styles.strong}>{shipment.ship_to_name}</div>
-        <div style={styles.addr}>{shipment.ship_to_address}</div>
+        <div style={styles.lineHeadRow}>
+          <div style={styles.sectionTitle}>Ship To</div>
+          <button
+            style={styles.linkAction}
+            onClick={() =>
+              setEditShipTo({
+                name: shipment.ship_to_name || '',
+                address: shipment.ship_to_address || '',
+              })
+            }
+          >
+            Reset to imported
+          </button>
+        </div>
+        <label style={styles.fieldLabel}>Ship-to name</label>
+        <input
+          style={styles.input}
+          value={editShipTo.name}
+          onChange={(e) =>
+            setEditShipTo({ ...editShipTo, name: e.target.value })
+          }
+          placeholder="Customer / consignee name"
+        />
+        <label style={styles.fieldLabel}>Ship-to address</label>
+        <textarea
+          style={styles.textarea}
+          value={editShipTo.address}
+          onChange={(e) =>
+            setEditShipTo({ ...editShipTo, address: e.target.value })
+          }
+          placeholder="Street address, city, state, zip"
+        />
+        <p style={styles.helpHint}>
+          Pre-filled from BC. Edit here if the imported address is wrong or
+          missing — this is what prints and saves on the BOL.
+        </p>
       </div>
 
       <div style={styles.section}>
@@ -965,7 +1011,11 @@ function KV({ label, value }) {
 }
 
 // ---------- Printable El Pinto BOL (with Reconstructed footer) ----------
-function BolDocument({ shipment, lines, totalCases, qa, notes }) {
+function BolDocument({ shipment, lines, totalCases, qa, notes, editShipTo }) {
+  const printShipToName =
+    (editShipTo && editShipTo.name) || shipment.ship_to_name || '';
+  const printShipToAddr =
+    (editShipTo && editShipTo.address) || shipment.ship_to_address || '';
   // Description of Goods: group by item
   const byItem = new Map();
   for (const l of lines) {
@@ -1016,8 +1066,8 @@ function BolDocument({ shipment, lines, totalCases, qa, notes }) {
           <tr>
             <td style={styles.infoCellTall}>
               <span style={styles.infoLabel}>Ship To:</span>
-              <div style={styles.infoStrong}>{shipment.ship_to_name}</div>
-              <div style={styles.infoAddr}>{shipment.ship_to_address}</div>
+              <div style={styles.infoStrong}>{printShipToName}</div>
+              <div style={styles.infoAddr}>{printShipToAddr}</div>
             </td>
             <td style={styles.infoCellTall}>
               <span style={styles.infoLabel}>Ship From:</span>
@@ -1176,6 +1226,8 @@ const styles = {
   textarea: { width: '100%', border: '1px solid #d1d5db', borderRadius: '10px', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box', minHeight: '60px', resize: 'vertical', fontFamily: 'inherit' },
   strong: { fontWeight: 700, fontSize: '15px' },
   addr: { fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', marginTop: '4px' },
+  linkAction: { background: 'transparent', border: 'none', color: '#c8102e', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' },
+  helpHint: { fontSize: '12px', color: '#6b7280', marginTop: '6px', lineHeight: 1.4 },
 
   kvRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #f3f4f6', fontSize: '13px' },
   kvLabel: { color: '#6b7280', fontWeight: 500 },
