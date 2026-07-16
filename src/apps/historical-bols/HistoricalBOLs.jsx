@@ -242,15 +242,18 @@ export default function HistoricalBOLs() {
         const lr = lower(r);
         const shipNo = pick(lr, ['No', 'Document_No']);
         if (!shipNo) continue;
+        // Ship-to fields — try ship_to_* first, fall back to bill_to_*, then sell_to_*
         const shipToName =
-          pick(lr, ['Ship_to_Name']) || pick(lr, ['Sell_to_Customer_Name']);
-        const shipAddrParts = [
-          pick(lr, ['Ship_to_Address']),
-          pick(lr, ['Ship_to_Address_2']),
+          pick(lr, ['Ship_to_Name']) ||
+          pick(lr, ['Bill_to_Name']) ||
+          pick(lr, ['Sell_to_Customer_Name']);
+        const shipAddrLines = [
+          pick(lr, ['Ship_to_Address']) || pick(lr, ['Bill_to_Address']),
+          pick(lr, ['Ship_to_Address_2']) || pick(lr, ['Bill_to_Address_2']),
           [
-            pick(lr, ['Ship_to_City']),
-            pick(lr, ['Ship_to_County']),
-            pick(lr, ['Ship_to_Post_Code']),
+            pick(lr, ['Ship_to_City']) || pick(lr, ['Bill_to_City']),
+            pick(lr, ['Ship_to_County']) || pick(lr, ['Bill_to_County']),
+            pick(lr, ['Ship_to_Post_Code']) || pick(lr, ['Bill_to_Post_Code']),
           ]
             .filter(Boolean)
             .join(' '),
@@ -260,10 +263,13 @@ export default function HistoricalBOLs() {
         headers.push({
           shipment_no: shipNo,
           order_no: pick(lr, ['Order_No']),
-          posting_date: pick(lr, ['Posting_Date']) || null,
-          customer_name: pick(lr, ['Sell_to_Customer_Name']),
+          // Try Posting_Date, then Shipment_Date, then Document_Date
+          posting_date:
+            pick(lr, ['Posting_Date', 'Shipment_Date', 'Document_Date']) ||
+            null,
+          customer_name: pick(lr, ['Sell_to_Customer_Name', 'Bill_to_Name']),
           ship_to_name: shipToName,
-          ship_to_address: shipAddrParts,
+          ship_to_address: shipAddrLines,
           bill_to_name: pick(lr, ['Bill_to_Name']),
           bill_to_address: [
             pick(lr, ['Bill_to_Address']),
@@ -278,6 +284,7 @@ export default function HistoricalBOLs() {
           ]
             .filter(Boolean)
             .join('\n'),
+          // No customer_po field on the current ZACK page - leave empty for now
           customer_po: pick(lr, ['External_Document_No']),
           carrier: pick(lr, [
             'Shipping_Agent_Code',
@@ -1022,7 +1029,10 @@ function BolDocument({ shipment, lines, totalCases, qa, notes }) {
           </tr>
           <InfoPair
             shaded
-            l={['Customer PO:', shipment.customer_po]}
+            l={[
+              shipment.customer_po ? 'Customer PO:' : 'Sales Order #:',
+              shipment.customer_po || shipment.order_no,
+            ]}
             r={['Tracking #:', shipment.tracking_no]}
           />
           <InfoPair
