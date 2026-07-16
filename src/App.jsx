@@ -16,8 +16,11 @@ import Export from './apps/cycle-counter/pages/Export.jsx';
 // Shipping Tags
 import ShippingTags from './apps/shipping-tags/ShippingTags.jsx';
 
-// BOL Maker
+// BOL Maker (current shipments)
 import BOLMaker from './apps/bol/BOLMaker.jsx';
+
+// Historical BOLs (audit reconstruction)
+import HistoricalBOLs from './apps/historical-bols/HistoricalBOLs.jsx';
 
 // Ops Dashboard
 import Dashboard from './apps/dashboard/Dashboard.jsx';
@@ -40,13 +43,16 @@ export default function App() {
           <Route path="sessions/:id/export" element={<Export />} />
         </Route>
 
-        {/* Shipping Tags (top-level) */}
+        {/* Shipping Tags */}
         <Route path="/shipping-tags" element={<ShippingTags />} />
 
-        {/* BOL Maker (top-level) */}
+        {/* BOL Maker (current) */}
         <Route path="/bol" element={<BOLMaker />} />
 
-        {/* Ops Dashboard (top-level) */}
+        {/* Historical BOLs (audit reconstruction) */}
+        <Route path="/historical-bols" element={<HistoricalBOLs />} />
+
+        {/* Ops Dashboard */}
         <Route path="/dashboard" element={<Dashboard />} />
 
         {/* Catch all */}
