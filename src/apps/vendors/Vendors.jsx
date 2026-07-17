@@ -12,6 +12,7 @@ import {
   Phone,
   Mail,
   Edit3,
+  Package,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -53,9 +54,41 @@ export default function Vendors() {
   const [message, setMessage] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Items catalog (from public.items) and items currently linked to this vendor
+  const [itemCatalog, setItemCatalog] = useState([]);
+  const [linkedItems, setLinkedItems] = useState([]);
+
   useEffect(() => {
     load();
+    loadItemCatalog();
   }, []);
+
+  async function loadItemCatalog() {
+    // Roll up items table by item_no to get one row per item with description
+    const { data } = await supabase.from('items').select('item_no, description').limit(20000);
+    const map = new Map();
+    for (const r of data || []) {
+      if (!r.item_no) continue;
+      if (!map.has(r.item_no)) {
+        map.set(r.item_no, { item_no: r.item_no, description: r.description || '' });
+      }
+    }
+    setItemCatalog(Array.from(map.values()).sort((a, b) => a.item_no.localeCompare(b.item_no)));
+  }
+
+  async function loadLinkedItems(vendorId) {
+    if (!vendorId) {
+      setLinkedItems([]);
+      return;
+    }
+    const { data } = await supabase
+      .schema('procurement')
+      .from('vendor_items')
+      .select('*')
+      .eq('vendor_id', vendorId)
+      .order('item_no');
+    setLinkedItems(data || []);
+  }
 
   async function load() {
     setLoading(true);
@@ -93,6 +126,7 @@ export default function Vendors() {
   function startNew() {
     setEditingId(null);
     setForm(blankVendor());
+    setLinkedItems([]);
     setMessage('');
     setConfirmDelete(false);
     setView('edit');
@@ -115,9 +149,72 @@ export default function Vendors() {
       notes: v.notes || '',
       active: v.active !== false,
     });
+    loadLinkedItems(v.id);
     setMessage('');
     setConfirmDelete(false);
     setView('edit');
+  }
+
+  async function linkItem(item) {
+    // If no vendor yet, save the vendor first so we have an id
+    let vendorId = editingId;
+    if (!vendorId) {
+      setMessage('Save the vendor first before linking items');
+      return;
+    }
+    // Skip if already linked
+    if (linkedItems.some((li) => li.item_no === item.item_no)) return;
+    try {
+      const row = {
+        vendor_id: vendorId,
+        item_no: item.item_no,
+        description: item.description || null,
+        uom: null,
+        last_unit_price: null,
+        last_purchase_date: null,
+      };
+      const { data, error } = await supabase
+        .schema('procurement')
+        .from('vendor_items')
+        .insert(row)
+        .select()
+        .single();
+      if (error) throw error;
+      setLinkedItems((prev) => [...prev, data]);
+    } catch (e) {
+      setMessage('Error linking item: ' + (e.message || 'unknown error'));
+    }
+  }
+
+  async function unlinkItem(vendorItemId) {
+    try {
+      const { error } = await supabase
+        .schema('procurement')
+        .from('vendor_items')
+        .delete()
+        .eq('id', vendorItemId);
+      if (error) throw error;
+      setLinkedItems((prev) => prev.filter((li) => li.id !== vendorItemId));
+    } catch (e) {
+      setMessage('Error unlinking item: ' + (e.message || 'unknown error'));
+    }
+  }
+
+  async function updateLinkedItem(vendorItemId, patch) {
+    // Optimistic
+    setLinkedItems((prev) =>
+      prev.map((li) => (li.id === vendorItemId ? { ...li, ...patch } : li))
+    );
+    try {
+      const { error } = await supabase
+        .schema('procurement')
+        .from('vendor_items')
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq('id', vendorItemId);
+      if (error) throw error;
+    } catch (e) {
+      setMessage('Error updating item: ' + (e.message || 'unknown error'));
+    }
   }
 
   async function saveVendor() {
@@ -247,6 +344,11 @@ export default function Vendors() {
             onDelete={deleteVendor}
             onCancelDelete={() => setConfirmDelete(false)}
             onRequestDelete={() => setConfirmDelete(true)}
+            linkedItems={linkedItems}
+            itemCatalog={itemCatalog}
+            onLinkItem={linkItem}
+            onUnlinkItem={unlinkItem}
+            onUpdateLinkedItem={updateLinkedItem}
           />
         )}
       </div>
@@ -382,6 +484,11 @@ function EditView({
   onDelete,
   onCancelDelete,
   onRequestDelete,
+  linkedItems,
+  itemCatalog,
+  onLinkItem,
+  onUnlinkItem,
+  onUpdateLinkedItem,
 }) {
   return (
     <>
@@ -505,6 +612,15 @@ function EditView({
         />
       </div>
 
+      <VendorItemsSection
+        editingId={editingId}
+        linkedItems={linkedItems || []}
+        itemCatalog={itemCatalog || []}
+        onLinkItem={onLinkItem}
+        onUnlinkItem={onUnlinkItem}
+        onUpdateLinkedItem={onUpdateLinkedItem}
+      />
+
       <div style={styles.section}>
         <label style={styles.checkboxRow}>
           <input
@@ -561,7 +677,178 @@ function EditView({
   );
 }
 
-// ---------- styles ----------
+// ---------- Vendor <-> items linking ----------
+function VendorItemsSection({
+  editingId,
+  linkedItems,
+  itemCatalog,
+  onLinkItem,
+  onUnlinkItem,
+  onUpdateLinkedItem,
+}) {
+  const [search, setSearch] = useState('');
+  const [showSuggest, setShowSuggest] = useState(false);
+
+  const linkedByItemNo = useMemo(() => {
+    const s = new Set();
+    for (const li of linkedItems) s.add(li.item_no);
+    return s;
+  }, [linkedItems]);
+
+  const suggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    for (const it of itemCatalog) {
+      if (linkedByItemNo.has(it.item_no)) continue; // don't suggest already-linked
+      if (
+        (it.item_no || '').toLowerCase().includes(q) ||
+        (it.description || '').toLowerCase().includes(q)
+      ) {
+        out.push(it);
+      }
+      if (out.length >= 8) break;
+    }
+    return out;
+  }, [search, itemCatalog, linkedByItemNo]);
+
+  return (
+    <div style={styles.section}>
+      <div style={styles.lineHeadRow}>
+        <div style={styles.sectionTitle}>Items supplied by this vendor</div>
+        <span style={styles.pill}>{linkedItems.length}</span>
+      </div>
+
+      {!editingId ? (
+        <p style={styles.hintNote}>
+          Save this vendor first — then you can add the items they supply.
+        </p>
+      ) : (
+        <>
+          <label style={styles.fieldLabel}>Search item catalog to add</label>
+          <div style={styles.searchWrap}>
+            <Search size={16} color="#9ca3af" />
+            <input
+              style={styles.searchInput}
+              placeholder="Item # or description..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setShowSuggest(true);
+              }}
+              onFocus={() => setShowSuggest(true)}
+            />
+          </div>
+          {showSuggest && suggestions.length > 0 && (
+            <div style={styles.suggestBox}>
+              {suggestions.map((s) => (
+                <button
+                  key={s.item_no}
+                  style={styles.suggestRow}
+                  onClick={() => {
+                    onLinkItem(s);
+                    setSearch('');
+                    setShowSuggest(false);
+                  }}
+                >
+                  <span style={{ fontWeight: 700 }}>{s.item_no}</span>
+                  <span style={{ color: '#6b7280', fontSize: 12 }}>
+                    {s.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {linkedItems.length === 0 ? (
+            <p style={styles.hintNote}>
+              No items linked yet. Search above and tap to add.
+            </p>
+          ) : (
+            <div style={{ marginTop: '8px' }}>
+              {linkedItems.map((li) => (
+                <LinkedItemRow
+                  key={li.id}
+                  li={li}
+                  onUnlink={() => onUnlinkItem(li.id)}
+                  onUpdate={(patch) => onUpdateLinkedItem(li.id, patch)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function LinkedItemRow({ li, onUnlink, onUpdate }) {
+  const [uom, setUom] = useState(li.uom || '');
+  const [price, setPrice] = useState(li.last_unit_price ?? '');
+  const [notes, setNotes] = useState(li.notes || '');
+  const [dirty, setDirty] = useState(false);
+
+  return (
+    <div style={styles.linkedItemRow}>
+      <div style={styles.linkedItemTop}>
+        <div>
+          <div style={styles.linkedItemNo}>{li.item_no}</div>
+          <div style={styles.linkedItemDesc}>{li.description}</div>
+        </div>
+        <button style={styles.removeLinkBtn} onClick={onUnlink}>
+          <X size={12} /> Remove
+        </button>
+      </div>
+      <div style={styles.twoCol}>
+        <div style={{ flex: 1 }}>
+          <label style={styles.miniLabel}>UoM</label>
+          <input
+            style={styles.miniInput}
+            value={uom}
+            placeholder="CASE"
+            onChange={(e) => {
+              setUom(e.target.value);
+              setDirty(true);
+            }}
+            onBlur={() => {
+              if (dirty) {
+                onUpdate({ uom: uom || null });
+                setDirty(false);
+              }
+            }}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={styles.miniLabel}>Last unit price</label>
+          <input
+            style={styles.miniInput}
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => {
+              setPrice(e.target.value);
+              setDirty(true);
+            }}
+            onBlur={() => {
+              if (dirty) {
+                onUpdate({
+                  last_unit_price: price === '' ? null : Number(price),
+                });
+                setDirty(false);
+              }
+            }}
+          />
+        </div>
+      </div>
+      {li.last_purchase_date ? (
+        <div style={styles.lastPurchase}>
+          Last purchased: {li.last_purchase_date}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const styles = {
   container: { minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8f8f8' },
   header: { backgroundColor: '#c8102e', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', position: 'sticky', top: 0, zIndex: 100 },
@@ -611,4 +898,18 @@ const styles = {
   deleteConfirmBox: { background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '12px', padding: '14px', marginTop: '16px' },
   deleteConfirmText: { fontSize: '14px', fontWeight: '600', color: '#9f1239', marginBottom: '12px', textAlign: 'center' },
   deleteBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#c8102e', color: '#fff', border: 'none', borderRadius: '12px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
+
+  lineHeadRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' },
+  pill: { fontSize: '12px', fontWeight: 700, background: '#f3f4f6', color: '#374151', borderRadius: '999px', padding: '2px 10px' },
+  hintNote: { fontSize: '13px', color: '#6b7280', margin: '10px 0 0', lineHeight: 1.4 },
+  suggestBox: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' },
+  suggestRow: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', textAlign: 'left', background: '#fafafa', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 10px', cursor: 'pointer' },
+  linkedItemRow: { border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px', marginBottom: '8px', background: '#fafafa' },
+  linkedItemTop: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px', marginBottom: '6px' },
+  linkedItemNo: { fontSize: '14px', fontWeight: 700 },
+  linkedItemDesc: { fontSize: '12px', color: '#6b7280' },
+  removeLinkBtn: { display: 'flex', alignItems: 'center', gap: '3px', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: '4px' },
+  miniLabel: { display: 'block', fontSize: '11px', fontWeight: 600, color: '#6b7280', marginBottom: '2px', marginTop: '4px' },
+  miniInput: { width: '100%', border: '1px solid #d1d5db', borderRadius: '8px', padding: '6px 8px', fontSize: '13px', boxSizing: 'border-box', background: '#fff' },
+  lastPurchase: { fontSize: '11px', color: '#6b7280', marginTop: '6px' },
 };

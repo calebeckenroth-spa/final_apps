@@ -59,6 +59,8 @@ export default function POTracker() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Items linked to the currently-selected vendor (for line item picker)
+  const [vendorItems, setVendorItems] = useState([]);
 
   useEffect(() => {
     load();
@@ -90,6 +92,20 @@ export default function POTracker() {
     for (const v of vendors) m.set(v.id, v.name);
     return m;
   }, [vendors]);
+
+  async function loadVendorItems(vendorId) {
+    if (!vendorId) {
+      setVendorItems([]);
+      return;
+    }
+    const { data } = await supabase
+      .schema('procurement')
+      .from('vendor_items')
+      .select('*')
+      .eq('vendor_id', vendorId)
+      .order('item_no');
+    setVendorItems(data || []);
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -127,6 +143,7 @@ export default function POTracker() {
     const seq = String(pos.length + 1).padStart(4, '0');
     setHeader({ ...blankPo(), po_number: `EPPO-${year}-${seq}` });
     setLines([blankLine()]);
+    setVendorItems([]);
     setMessage('');
     setConfirmDelete(false);
     setView('edit');
@@ -145,6 +162,8 @@ export default function POTracker() {
       freight_terms: p.freight_terms || '',
       notes: p.notes || '',
     });
+    if (p.vendor_id) loadVendorItems(p.vendor_id);
+    else setVendorItems([]);
     // load lines
     const { data: lineRows } = await supabase
       .schema('procurement')
@@ -256,6 +275,25 @@ export default function POTracker() {
         if (lineErr) throw lineErr;
       }
 
+      // Update vendor_items with new "last price / last date" for each linked item
+      if (header.vendor_id) {
+        const purchaseDate = header.order_date || new Date().toISOString().slice(0, 10);
+        for (const l of lineRows) {
+          if (!l.item_no || l.unit_price == null) continue;
+          // Best-effort upsert (won't fail the save if it errors)
+          await supabase
+            .schema('procurement')
+            .from('vendor_items')
+            .update({
+              last_unit_price: l.unit_price,
+              last_purchase_date: purchaseDate,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('vendor_id', header.vendor_id)
+            .eq('item_no', l.item_no);
+        }
+      }
+
       setMessage('Saved \u2713');
       load();
     } catch (e) {
@@ -283,6 +321,13 @@ export default function POTracker() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function selectVendor(vendorId) {
+    setH('vendor_id', vendorId);
+    const v = vendors.find((x) => x.id === vendorId);
+    if (v) setH('vendor_name', v.name);
+    loadVendorItems(vendorId);
   }
 
   return (
@@ -334,6 +379,8 @@ export default function POTracker() {
             removeLine={removeLine}
             totalAmount={totalAmount}
             vendors={vendors}
+            vendorItems={vendorItems}
+            selectVendor={selectVendor}
             saving={saving}
             message={message}
             editingId={editingId}
@@ -468,6 +515,8 @@ function EditView({
   removeLine,
   totalAmount,
   vendors,
+  vendorItems,
+  selectVendor,
   saving,
   message,
   editingId,
@@ -509,12 +558,7 @@ function EditView({
         <select
           style={styles.input}
           value={header.vendor_id || ''}
-          onChange={(e) => {
-            const id = e.target.value;
-            const v = vendors.find((x) => x.id === id);
-            setH('vendor_id', id);
-            if (v) setH('vendor_name', v.name);
-          }}
+          onChange={(e) => selectVendor(e.target.value)}
         >
           <option value="">(select vendor)</option>
           {vendors.map((v) => (
@@ -584,11 +628,43 @@ function EditView({
             <div style={styles.twoCol}>
               <div style={{ flex: 1 }}>
                 <label style={styles.miniLabel}>Item #</label>
-                <input
-                  style={styles.miniInput}
-                  value={l.item_no}
-                  onChange={(e) => setLine(l._key, 'item_no', e.target.value)}
-                />
+                {vendorItems && vendorItems.length > 0 ? (
+                  <select
+                    style={styles.miniInput}
+                    value={l.item_no || ''}
+                    onChange={(e) => {
+                      const picked = e.target.value;
+                      const vi = vendorItems.find((x) => x.item_no === picked);
+                      // Autofill description, UoM, unit price from vendor_items
+                      setLine(l._key, 'item_no', picked);
+                      if (vi) {
+                        setLine(l._key, 'description', vi.description || '');
+                        if (vi.uom) setLine(l._key, 'uom', vi.uom);
+                        if (vi.last_unit_price != null)
+                          setLine(l._key, 'unit_price', String(vi.last_unit_price));
+                      }
+                    }}
+                  >
+                    <option value="">(pick item)</option>
+                    {vendorItems.map((vi) => (
+                      <option key={vi.item_no} value={vi.item_no}>
+                        {vi.item_no}
+                        {vi.description ? ' — ' + vi.description.slice(0, 30) : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    style={styles.miniInput}
+                    value={l.item_no}
+                    onChange={(e) => setLine(l._key, 'item_no', e.target.value)}
+                    placeholder={
+                      !header.vendor_id
+                        ? 'Pick vendor first'
+                        : 'No items linked'
+                    }
+                  />
+                )}
               </div>
               <div style={{ flex: 2 }}>
                 <label style={styles.miniLabel}>Description</label>
