@@ -25,6 +25,13 @@ import HistoricalBOLs from './apps/historical-bols/HistoricalBOLs.jsx';
 // Ops Dashboard
 import Dashboard from './apps/dashboard/Dashboard.jsx';
 
+// Procurement suite
+import Vendors from './apps/vendors/Vendors.jsx';
+import ReorderWatch from './apps/reorder/ReorderWatch.jsx';
+import POTracker from './apps/po-tracker/POTracker.jsx';
+import Receiving from './apps/receiving/Receiving.jsx';
+import POCalendar from './apps/po-calendar/POCalendar.jsx';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -54,6 +61,13 @@ export default function App() {
 
         {/* Ops Dashboard */}
         <Route path="/dashboard" element={<Dashboard />} />
+
+        {/* Procurement */}
+        <Route path="/vendors" element={<Vendors />} />
+        <Route path="/reorder" element={<ReorderWatch />} />
+        <Route path="/po-tracker" element={<POTracker />} />
+        <Route path="/receiving" element={<Receiving />} />
+        <Route path="/po-calendar" element={<POCalendar />} />
 
         {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />
