@@ -10,7 +10,9 @@ import {
   X,
   PackageCheck,
   Calendar,
+  Download,
 } from 'lucide-react';
+import { generatePdfFromNode } from '../../lib/pdfHelper.js';
 
 const DISCREPANCIES = [
   { value: '', label: 'None' },
@@ -371,6 +373,21 @@ export default function Receiving() {
     }
   }
 
+  async function downloadReceipt() {
+    if (!header.receipt_number) {
+      setMessage('Save the receipt first before downloading');
+      return;
+    }
+    try {
+      await generatePdfFromNode({
+        nodeId: 'receipt-print',
+        filename: `${header.receipt_number}.pdf`,
+      });
+    } catch (e) {
+      setMessage('Error making PDF: ' + (e.message || 'unknown'));
+    }
+  }
+
   async function deleteReceipt() {
     if (!editingId) return;
     setSaving(true);
@@ -448,15 +465,208 @@ export default function Receiving() {
             editingId={editingId}
             confirmDelete={confirmDelete}
             onSave={saveReceipt}
+            onDownload={downloadReceipt}
             onRequestDelete={() => setConfirmDelete(true)}
             onCancelDelete={() => setConfirmDelete(false)}
             onConfirmDelete={deleteReceipt}
           />
         )}
       </div>
+
+      {view === 'edit' && editingId ? (
+        <div
+          id="receipt-print"
+          style={{ position: 'absolute', left: '-10000px', top: 0 }}
+        >
+          <ReceiptDocument header={header} lines={lines} />
+        </div>
+      ) : null}
     </div>
   );
 }
+
+// Printable Receipt / Proof of Delivery document
+function ReceiptDocument({ header, lines }) {
+  const printLines = lines.filter(
+    (l) => (l.item_no || '').trim() || (l.description || '').trim()
+  );
+  const totalQty = printLines.reduce(
+    (s, l) => s + (Number(l.quantity) || 0),
+    0
+  );
+  const anyDiscrepancy = printLines.some((l) => l.discrepancy);
+  return (
+    <div style={docStyles.page}>
+      <div style={docStyles.headerRow}>
+        <div>
+          <div style={docStyles.brand}>El Pinto Foods LLC</div>
+          <div style={docStyles.brandAddr}>
+            10500 4th St NW<br />Albuquerque, NM 87114
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={docStyles.docTitle}>RECEIVING RECORD</div>
+          <div style={docStyles.docNumber}>{header.receipt_number}</div>
+        </div>
+      </div>
+
+      <table style={docStyles.infoTable}>
+        <tbody>
+          <tr>
+            <td style={docStyles.infoCellTall}>
+              <span style={docStyles.infoLabel}>Vendor:</span>
+              <div style={docStyles.infoStrong}>
+                {header.vendor_name || ''}
+              </div>
+            </td>
+            <td style={docStyles.infoCellTall}>
+              <span style={docStyles.infoLabel}>Received By:</span>
+              <div style={docStyles.infoStrong}>
+                {header.received_by || ''}
+              </div>
+              <div style={docStyles.infoAddr}>
+                Date: {header.received_date}
+              </div>
+            </td>
+          </tr>
+          <RowInfoPair
+            shaded
+            l={['Carrier:', header.carrier]}
+            r={['Trailer #:', header.trailer_number]}
+          />
+          <RowInfoPair
+            l={['Seal #:', header.seal_number]}
+            r={['Temp at arrival:', header.temp_at_arrival]}
+          />
+        </tbody>
+      </table>
+
+      <div style={docStyles.heading}>What Arrived</div>
+      <table style={docStyles.linesTable}>
+        <thead>
+          <tr>
+            <th style={docStyles.th}>Item #</th>
+            <th style={docStyles.th}>Description</th>
+            <th style={docStyles.thR}>Qty</th>
+            <th style={docStyles.th}>UoM</th>
+            <th style={docStyles.th}>Lot #</th>
+            <th style={docStyles.th}>Exp Date</th>
+            <th style={docStyles.th}>Discrepancy</th>
+          </tr>
+        </thead>
+        <tbody>
+          {printLines.map((l, i) => (
+            <tr key={i}>
+              <td style={docStyles.td}>{l.item_no}</td>
+              <td style={docStyles.td}>{l.description}</td>
+              <td style={docStyles.tdR}>{l.quantity}</td>
+              <td style={docStyles.td}>{l.uom}</td>
+              <td style={docStyles.td}>{l.lot_no}</td>
+              <td style={docStyles.td}>{l.expiration_date}</td>
+              <td style={docStyles.td}>
+                {l.discrepancy ? (
+                  <span style={docStyles.flagBad}>
+                    {l.discrepancy}
+                    {l.notes ? ' — ' + l.notes : ''}
+                  </span>
+                ) : (
+                  ''
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={docStyles.totalsRow}>
+        <div style={docStyles.totalLabel}>TOTAL UNITS:</div>
+        <div style={docStyles.totalValue}>{totalQty}</div>
+      </div>
+
+      {anyDiscrepancy ? (
+        <div style={docStyles.discrepancyBlock}>
+          <strong>Discrepancies noted above.</strong> Please review before
+          final acceptance.
+        </div>
+      ) : null}
+
+      {header.notes ? (
+        <div style={docStyles.notes}>
+          <strong>Notes:</strong> {header.notes}
+        </div>
+      ) : null}
+
+      <div style={docStyles.signRow}>
+        <div style={docStyles.signBox}>
+          <div style={docStyles.signLine}></div>
+          <div style={docStyles.signLabel}>Received by (signature)</div>
+        </div>
+        <div style={docStyles.signBox}>
+          <div style={docStyles.signLine}></div>
+          <div style={docStyles.signLabel}>Driver / delivering agent</div>
+        </div>
+      </div>
+
+      <div style={docStyles.footer}>
+        Generated {new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RowInfoPair({ l, r, shaded }) {
+  const cell = shaded
+    ? { ...docStyles.infoCell, background: '#e8e8e8' }
+    : docStyles.infoCell;
+  return (
+    <tr>
+      <td style={cell}>
+        <span style={docStyles.infoLabel}>{l[0]}</span>{' '}
+        <span>{l[1] == null ? '' : String(l[1])}</span>
+      </td>
+      <td style={cell}>
+        <span style={docStyles.infoLabel}>{r[0]}</span>{' '}
+        <span>{r[1] == null ? '' : String(r[1])}</span>
+      </td>
+    </tr>
+  );
+}
+
+const docStyles = {
+  page: { width: '7.5in', color: '#000', fontFamily: 'Georgia, "Times New Roman", serif', fontSize: '11px', padding: '10px' },
+  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px', borderBottom: '2px solid #c8102e', paddingBottom: '10px' },
+  brand: { fontSize: '18px', fontWeight: 700, color: '#c8102e' },
+  brandAddr: { fontSize: '11px', color: '#374151', marginTop: '4px' },
+  docTitle: { fontSize: '20px', fontWeight: 700, color: '#111' },
+  docNumber: { fontSize: '14px', fontWeight: 600, color: '#c8102e', marginTop: '2px' },
+  infoTable: { width: '100%', borderCollapse: 'collapse', border: '1px solid #999', marginBottom: '12px', tableLayout: 'fixed' },
+  infoCellTall: { border: '1px solid #ccc', padding: '6px 8px', verticalAlign: 'top', width: '50%' },
+  infoCell: { border: '1px solid #ccc', padding: '4px 8px', verticalAlign: 'top', width: '50%', fontSize: '11px' },
+  infoLabel: { fontWeight: 700 },
+  infoStrong: { fontWeight: 700, fontSize: '12px', marginTop: '2px' },
+  infoAddr: { fontSize: '11px', whiteSpace: 'pre-wrap' },
+  heading: { fontSize: '15px', fontWeight: 700, margin: '14px 0 6px' },
+  linesTable: { width: '100%', borderCollapse: 'collapse', marginBottom: '10px' },
+  th: { border: '1px solid #999', padding: '5px 6px', textAlign: 'left', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  thR: { border: '1px solid #999', padding: '5px 6px', textAlign: 'right', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  td: { border: '1px solid #ccc', padding: '4px 6px', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  tdR: { border: '1px solid #ccc', padding: '4px 6px', fontSize: '10px', textAlign: 'right', fontFamily: 'Arial, sans-serif' },
+  totalsRow: { display: 'flex', justifyContent: 'flex-end', gap: '12px', alignItems: 'center', padding: '8px 12px', background: '#f9fafb', borderRadius: '4px', marginBottom: '12px' },
+  totalLabel: { fontSize: '13px', fontWeight: 700 },
+  totalValue: { fontSize: '16px', fontWeight: 800, color: '#c8102e' },
+  flagBad: { color: '#c8102e', fontWeight: 700 },
+  discrepancyBlock: { border: '2px solid #c8102e', background: '#fff1f2', padding: '8px', fontSize: '11px', marginBottom: '10px', fontFamily: 'Arial, sans-serif' },
+  notes: { border: '1px solid #999', padding: '8px', fontSize: '11px', marginBottom: '10px', fontFamily: 'Arial, sans-serif' },
+  signRow: { display: 'flex', gap: '24px', marginTop: '30px' },
+  signBox: { flex: 1 },
+  signLine: { borderBottom: '1px solid #000', height: '30px' },
+  signLabel: { fontSize: '10px', color: '#374151', marginTop: '4px', fontFamily: 'Arial, sans-serif' },
+  footer: { fontSize: '9px', color: '#6b7280', textAlign: 'right', marginTop: '10px', fontFamily: 'Arial, sans-serif' },
+};
 
 function ListView({
   receipts,
@@ -535,6 +745,7 @@ function EditView({
   editingId,
   confirmDelete,
   onSave,
+  onDownload,
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
@@ -778,6 +989,12 @@ function EditView({
           <Save size={18} />
           {saving ? 'Saving...' : editingId ? 'Update receipt' : 'Save receipt'}
         </button>
+        {editingId ? (
+          <button style={styles.altBtn} onClick={onDownload}>
+            <Download size={18} />
+            Download PDF
+          </button>
+        ) : null}
       </div>
 
       {editingId ? (

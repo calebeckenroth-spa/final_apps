@@ -11,7 +11,9 @@ import {
   ShoppingCart,
   Calendar,
   Package,
+  Download,
 } from 'lucide-react';
+import { generatePdfFromNode } from '../../lib/pdfHelper.js';
 
 const STATUSES = [
   { value: 'open', label: 'Open', color: '#a16207', bg: '#fef3c7' },
@@ -303,6 +305,21 @@ export default function POTracker() {
     }
   }
 
+  async function downloadPo() {
+    if (!header.po_number) {
+      setMessage('Save the PO first before downloading');
+      return;
+    }
+    try {
+      await generatePdfFromNode({
+        nodeId: 'po-print',
+        filename: `${header.po_number}.pdf`,
+      });
+    } catch (e) {
+      setMessage('Error making PDF: ' + (e.message || 'unknown'));
+    }
+  }
+
   async function deletePo() {
     if (!editingId) return;
     setSaving(true);
@@ -386,15 +403,175 @@ export default function POTracker() {
             editingId={editingId}
             confirmDelete={confirmDelete}
             onSave={savePo}
+            onDownload={downloadPo}
             onRequestDelete={() => setConfirmDelete(true)}
             onCancelDelete={() => setConfirmDelete(false)}
             onConfirmDelete={deletePo}
           />
         )}
       </div>
+
+      {view === 'edit' && editingId ? (
+        <div
+          id="po-print"
+          style={{ position: 'absolute', left: '-10000px', top: 0 }}
+        >
+          <PoDocument header={header} lines={lines} totalAmount={totalAmount} />
+        </div>
+      ) : null}
     </div>
   );
 }
+
+// Printable PO document — El Pinto Foods letterhead style
+function PoDocument({ header, lines, totalAmount }) {
+  const printLines = lines.filter(
+    (l) => (l.item_no || '').trim() || (l.description || '').trim()
+  );
+  return (
+    <div style={docStyles.page}>
+      <div style={docStyles.headerRow}>
+        <div>
+          <div style={docStyles.brand}>El Pinto Foods LLC</div>
+          <div style={docStyles.brandAddr}>
+            10500 4th St NW<br />Albuquerque, NM 87114
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={docStyles.docTitle}>PURCHASE ORDER</div>
+          <div style={docStyles.docNumber}>{header.po_number}</div>
+        </div>
+      </div>
+
+      <table style={docStyles.infoTable}>
+        <tbody>
+          <tr>
+            <td style={docStyles.infoCellTall}>
+              <span style={docStyles.infoLabel}>Vendor:</span>
+              <div style={docStyles.infoStrong}>
+                {header.vendor_name || ''}
+              </div>
+            </td>
+            <td style={docStyles.infoCellTall}>
+              <span style={docStyles.infoLabel}>Ship To:</span>
+              <div style={docStyles.infoStrong}>El Pinto Foods LLC</div>
+              <div style={docStyles.infoAddr}>
+                {header.ship_to_location || 'ABQEP'}
+              </div>
+            </td>
+          </tr>
+          <InfoPair
+            shaded
+            l={['Order Date:', header.order_date]}
+            r={['Expected Date:', header.expected_date]}
+          />
+          <InfoPair
+            l={['Freight Terms:', header.freight_terms]}
+            r={['Status:', (header.status || '').replace('_', ' ')]}
+          />
+        </tbody>
+      </table>
+
+      <div style={docStyles.heading}>Line Items</div>
+      <table style={docStyles.linesTable}>
+        <thead>
+          <tr>
+            <th style={docStyles.th}>Item #</th>
+            <th style={docStyles.th}>Description</th>
+            <th style={docStyles.thR}>Qty</th>
+            <th style={docStyles.th}>UoM</th>
+            <th style={docStyles.thR}>Unit $</th>
+            <th style={docStyles.thR}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {printLines.map((l, i) => {
+            const q = Number(l.quantity) || 0;
+            const u = Number(l.unit_price) || 0;
+            const total = q * u;
+            return (
+              <tr key={i}>
+                <td style={docStyles.td}>{l.item_no}</td>
+                <td style={docStyles.td}>{l.description}</td>
+                <td style={docStyles.tdR}>{l.quantity}</td>
+                <td style={docStyles.td}>{l.uom}</td>
+                <td style={docStyles.tdR}>
+                  {u ? '$' + u.toFixed(2) : ''}
+                </td>
+                <td style={docStyles.tdR}>
+                  {total ? '$' + total.toFixed(2) : ''}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div style={docStyles.totalsRow}>
+        <div style={docStyles.totalLabel}>TOTAL:</div>
+        <div style={docStyles.totalValue}>${totalAmount.toFixed(2)}</div>
+      </div>
+
+      {header.notes ? (
+        <div style={docStyles.notes}>
+          <strong>Notes:</strong> {header.notes}
+        </div>
+      ) : null}
+
+      <div style={docStyles.footer}>
+        Generated {new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })}
+      </div>
+    </div>
+  );
+}
+
+function InfoPair({ l, r, shaded }) {
+  const cell = shaded
+    ? { ...docStyles.infoCell, background: '#e8e8e8' }
+    : docStyles.infoCell;
+  return (
+    <tr>
+      <td style={cell}>
+        <span style={docStyles.infoLabel}>{l[0]}</span>{' '}
+        <span>{l[1] == null ? '' : String(l[1])}</span>
+      </td>
+      <td style={cell}>
+        <span style={docStyles.infoLabel}>{r[0]}</span>{' '}
+        <span>{r[1] == null ? '' : String(r[1])}</span>
+      </td>
+    </tr>
+  );
+}
+
+const docStyles = {
+  page: { width: '7.5in', color: '#000', fontFamily: 'Georgia, "Times New Roman", serif', fontSize: '11px', padding: '10px' },
+  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px', borderBottom: '2px solid #c8102e', paddingBottom: '10px' },
+  brand: { fontSize: '18px', fontWeight: 700, color: '#c8102e' },
+  brandAddr: { fontSize: '11px', color: '#374151', marginTop: '4px' },
+  docTitle: { fontSize: '20px', fontWeight: 700, color: '#111' },
+  docNumber: { fontSize: '14px', fontWeight: 600, color: '#c8102e', marginTop: '2px' },
+  infoTable: { width: '100%', borderCollapse: 'collapse', border: '1px solid #999', marginBottom: '12px', tableLayout: 'fixed' },
+  infoCellTall: { border: '1px solid #ccc', padding: '6px 8px', verticalAlign: 'top', width: '50%' },
+  infoCell: { border: '1px solid #ccc', padding: '4px 8px', verticalAlign: 'top', width: '50%', fontSize: '11px' },
+  infoLabel: { fontWeight: 700 },
+  infoStrong: { fontWeight: 700, fontSize: '12px', marginTop: '2px' },
+  infoAddr: { fontSize: '11px', whiteSpace: 'pre-wrap' },
+  heading: { fontSize: '15px', fontWeight: 700, margin: '14px 0 6px' },
+  linesTable: { width: '100%', borderCollapse: 'collapse', marginBottom: '10px' },
+  th: { border: '1px solid #999', padding: '5px 6px', textAlign: 'left', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  thR: { border: '1px solid #999', padding: '5px 6px', textAlign: 'right', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },
+  td: { border: '1px solid #ccc', padding: '4px 6px', fontSize: '11px', fontFamily: 'Arial, sans-serif' },
+  tdR: { border: '1px solid #ccc', padding: '4px 6px', fontSize: '11px', textAlign: 'right', fontFamily: 'Arial, sans-serif' },
+  totalsRow: { display: 'flex', justifyContent: 'flex-end', gap: '12px', alignItems: 'center', padding: '8px 12px', background: '#f9fafb', borderRadius: '4px', marginBottom: '12px' },
+  totalLabel: { fontSize: '13px', fontWeight: 700 },
+  totalValue: { fontSize: '16px', fontWeight: 800, color: '#c8102e' },
+  notes: { border: '1px solid #999', padding: '8px', fontSize: '11px', marginBottom: '10px', fontFamily: 'Arial, sans-serif' },
+  footer: { fontSize: '9px', color: '#6b7280', textAlign: 'right', marginTop: '10px', fontFamily: 'Arial, sans-serif' },
+};
 
 function ListView({
   pos,
@@ -522,6 +699,7 @@ function EditView({
   editingId,
   confirmDelete,
   onSave,
+  onDownload,
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
@@ -744,6 +922,12 @@ function EditView({
           <Save size={18} />
           {saving ? 'Saving...' : editingId ? 'Update PO' : 'Save PO'}
         </button>
+        {editingId ? (
+          <button style={styles.altBtn} onClick={onDownload}>
+            <Download size={18} />
+            Download PDF
+          </button>
+        ) : null}
       </div>
 
       {editingId ? (
