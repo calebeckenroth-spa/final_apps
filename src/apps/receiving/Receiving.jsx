@@ -12,8 +12,10 @@ import {
   Calendar,
   Download,
   PenLine,
+  Printer,
 } from 'lucide-react';
 import { generatePdfFromNode } from '../../lib/pdfHelper.js';
+import { TagFace, makeBarcodeSvg, labelPrintCss, buildBarcodeValue } from '../../lib/labelHelper.jsx';
 
 const DISCREPANCIES = [
   { value: '', label: 'None' },
@@ -34,6 +36,7 @@ const blankLine = () => ({
   expiration_date: '',
   discrepancy: '',
   notes: '',
+  units_per_case: '',
 });
 
 const blankReceipt = () => ({
@@ -70,6 +73,9 @@ export default function Receiving() {
   const [message, setMessage] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showSignaturePad, setShowSignaturePad] = useState(false);
+  const [showLabelModal, setShowLabelModal] = useState(false);
+  // Per-line label count map, keyed by line _key
+  const [labelCounts, setLabelCounts] = useState({});
 
   useEffect(() => {
     load();
@@ -156,6 +162,7 @@ export default function Receiving() {
         expiration_date: '',
         discrepancy: '',
         notes: '',
+        units_per_case: sourceLine.units_per_case || '',
       };
       // Insert right after the source line so grouping is visually preserved
       const before = ls.slice(0, idx + 1);
@@ -251,6 +258,7 @@ export default function Receiving() {
         expiration_date: l.expiration_date || '',
         discrepancy: l.discrepancy || '',
         notes: l.notes || '',
+        units_per_case: l.units_per_case ?? '',
       }))
     );
     setMessage('');
@@ -323,6 +331,10 @@ export default function Receiving() {
           expiration_date: l.expiration_date || null,
           discrepancy: l.discrepancy || null,
           notes: l.notes || null,
+          units_per_case:
+            l.units_per_case === '' || l.units_per_case == null
+              ? null
+              : Number(l.units_per_case),
         }));
       if (lineRows.length > 0) {
         const { error: le } = await supabase
@@ -404,6 +416,30 @@ export default function Receiving() {
       // Non-fatal: receipt is already saved.
       console.warn('Roll-up failed:', e);
     }
+  }
+
+  function openLabelModal() {
+    // Only lines with an item and a lot are label-worthy
+    const eligible = lines.filter(
+      (l) => (l.item_no || '').trim() && (l.lot_no || '').trim()
+    );
+    if (eligible.length === 0) {
+      setMessage(
+        'No printable lines yet. Add at least one item + lot before printing.'
+      );
+      return;
+    }
+    // Default: one label per case received (matches "5 cases in → 5 labels")
+    const defaults = {};
+    for (const l of lines) {
+      if (labelCounts[l._key] != null) {
+        defaults[l._key] = labelCounts[l._key];
+      } else {
+        defaults[l._key] = Number(l.quantity) > 0 ? Number(l.quantity) : 1;
+      }
+    }
+    setLabelCounts(defaults);
+    setShowLabelModal(true);
   }
 
   async function downloadReceipt() {
@@ -530,6 +566,7 @@ export default function Receiving() {
               setH('receiver_signature', '');
               setH('receiver_signed_at', '');
             }}
+            onPrintLabels={openLabelModal}
           />
         )}
       </div>
@@ -552,6 +589,16 @@ export default function Receiving() {
             setH('receiver_signed_at', new Date().toISOString());
             setShowSignaturePad(false);
           }}
+        />
+      ) : null}
+
+      {showLabelModal ? (
+        <LabelPrintModal
+          lines={lines}
+          header={header}
+          labelCounts={labelCounts}
+          setLabelCounts={setLabelCounts}
+          onClose={() => setShowLabelModal(false)}
         />
       ) : null}
     </div>
@@ -844,6 +891,7 @@ function EditView({
   onConfirmDelete,
   onOpenSignaturePad,
   onClearSignature,
+  onPrintLabels,
 }) {
   return (
     <>
@@ -1042,6 +1090,24 @@ function EditView({
                 />
               </div>
             </div>
+            <div style={styles.twoCol}>
+              <div style={{ flex: 1 }}>
+                <label style={styles.miniLabel}>
+                  Units per case <span style={styles.optionalHint}>(optional)</span>
+                </label>
+                <input
+                  style={styles.miniInput}
+                  type="number"
+                  min="0"
+                  value={l.units_per_case}
+                  onChange={(e) =>
+                    setLine(l._key, 'units_per_case', e.target.value)
+                  }
+                  placeholder="e.g. 10000 labels per case"
+                />
+              </div>
+              <div style={{ flex: 1 }} />
+            </div>
             {l.discrepancy ? (
               <>
                 <label style={styles.miniLabel}>Discrepancy note</label>
@@ -1135,6 +1201,15 @@ function EditView({
       </div>
 
       {editingId ? (
+        <div style={styles.actionRow}>
+          <button style={styles.labelsBtn} onClick={onPrintLabels}>
+            <Printer size={18} />
+            Print pallet labels
+          </button>
+        </div>
+      ) : null}
+
+      {editingId ? (
         confirmDelete ? (
           <div style={styles.deleteConfirmBox}>
             <div style={styles.deleteConfirmText}>
@@ -1162,6 +1237,222 @@ function EditView({
 }
 
 // ---------- Signature pad (finger/stylus on tablet, saves as base64 PNG) ----------
+// ---------- Label print modal (renders 4x6 labels and triggers print) ----------
+function LabelPrintModal({
+  lines,
+  header,
+  labelCounts,
+  setLabelCounts,
+  onClose,
+}) {
+  const eligible = lines.filter(
+    (l) => (l.item_no || '').trim() && (l.lot_no || '').trim()
+  );
+
+  // For each eligible line we let the user set how many cases they want a
+  // label for. Default = the quantity received (one label per case).
+  // If units_per_case is set on the line, that's what shows as the QTY on
+  // each printed label; otherwise we fall back to the raw quantity.
+  const totalLabels = eligible.reduce(
+    (s, l) => s + (Number(labelCounts[l._key]) || 0),
+    0
+  );
+
+  const printQueue = [];
+  for (const l of eligible) {
+    const casesRequested = Math.max(
+      0,
+      Math.min(500, Number(labelCounts[l._key]) || 0)
+    );
+    if (casesRequested === 0) continue;
+
+    // Per-label QTY: units_per_case if provided, otherwise the raw quantity.
+    // Reason: if you have 5 cases of 10000 labels each, each printed label
+    // shows 10000, not 5. If units_per_case is blank, we assume 1 case = 1
+    // whatever-you-received and print the raw quantity.
+    const upc = Number(l.units_per_case);
+    const perLabelQty =
+      upc && upc > 0 ? upc : Number(l.quantity) || l.quantity || '';
+
+    // How many total cases we're labeling — defaults to received quantity so
+    // the case counter reads "Case 1 of 5" naturally.
+    const totalCases = Number(l.quantity) || casesRequested;
+
+    const commonData = {
+      shipTo: '',
+      poNumber: header.receipt_number || '',
+      shipDate: header.received_date || '',
+      itemNo: l.item_no,
+      description: l.description || '',
+      lotNo: l.lot_no || '',
+      expirationDate: l.expiration_date || '',
+      qty: perLabelQty,
+      uom: l.uom || '',
+    };
+
+    // Barcode encodes item|description|lot|exp|qty (same for every label of
+    // this line, since scan should pop up item data regardless of case index)
+    const barcodeValue = buildBarcodeValue({
+      itemNo: l.item_no,
+      description: l.description || '',
+      lotNo: l.lot_no || '',
+      expirationDate: l.expiration_date || '',
+      qty: perLabelQty,
+    });
+    const barcodeSvg = makeBarcodeSvg(barcodeValue);
+
+    for (let i = 0; i < casesRequested; i++) {
+      const caseIndex = i + 1;
+      printQueue.push({
+        data: {
+          ...commonData,
+          caseCounter: { index: caseIndex, total: totalCases },
+        },
+        barcodeSvg,
+        key: `${l._key}-${caseIndex}`,
+      });
+    }
+  }
+
+  function handlePrint() {
+    if (printQueue.length === 0) return;
+    setTimeout(() => window.print(), 100);
+  }
+
+  return (
+    <>
+      <style>{labelPrintCss('receiving-labels-print')}</style>
+      <div className="screen-only" style={styles.overlay}>
+        <div style={{ ...styles.modal, maxHeight: '90vh' }}>
+          <div style={styles.modalHead}>
+            <span style={styles.modalTitle}>Print case labels</span>
+            <button style={styles.iconBtn} onClick={onClose}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <p style={styles.helpHint}>
+            One label per case, showing the units per case on the label.
+            The barcode encodes item, description, lot, expiration, and qty
+            (pipe-delimited) so a scanner can auto-fill fields.
+          </p>
+
+          {eligible.length === 0 ? (
+            <div style={{ padding: '20px 0', textAlign: 'center', color: '#9ca3af' }}>
+              No printable lines yet. Each label needs an item # and a lot #.
+            </div>
+          ) : (
+            <div style={styles.labelListWrap}>
+              {eligible.map((l) => {
+                const cases = Number(l.quantity) || 0;
+                const upc = Number(l.units_per_case) || 0;
+                const perLabel = upc > 0 ? upc : cases;
+                return (
+                  <div key={l._key} style={styles.labelRow}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={styles.labelRowItem}>{l.item_no}</div>
+                      <div style={styles.labelRowDesc}>{l.description}</div>
+                      <div style={styles.labelRowMeta}>
+                        Lot <strong>{l.lot_no}</strong>
+                      </div>
+                      <div style={styles.labelRowMeta}>
+                        Received: <strong>{cases}</strong> {l.uom || 'CASE'}
+                        {upc > 0 ? (
+                          <>
+                            {' '}
+                            · <strong>{upc.toLocaleString()}</strong> per case
+                          </>
+                        ) : null}
+                      </div>
+                      <div style={styles.labelRowMeta}>
+                        Each label will show QTY = <strong>{perLabel || '—'}</strong>
+                      </div>
+                    </div>
+                    <div style={styles.labelCountArea}>
+                      <label style={styles.miniLabel}># labels (= cases)</label>
+                      <input
+                        style={styles.labelCountInput}
+                        type="number"
+                        min="0"
+                        max="500"
+                        value={labelCounts[l._key] ?? cases}
+                        onChange={(e) =>
+                          setLabelCounts({
+                            ...labelCounts,
+                            [l._key]: e.target.value,
+                          })
+                        }
+                      />
+                      <div style={styles.labelCountQuickRow}>
+                        <button
+                          style={styles.quickBtn}
+                          onClick={() =>
+                            setLabelCounts({ ...labelCounts, [l._key]: 1 })
+                          }
+                        >
+                          1
+                        </button>
+                        {cases ? (
+                          <button
+                            style={styles.quickBtn}
+                            onClick={() =>
+                              setLabelCounts({
+                                ...labelCounts,
+                                [l._key]: cases,
+                              })
+                            }
+                          >
+                            {cases}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={styles.labelTotalRow}>
+            Total labels: <strong>{totalLabels}</strong>
+          </div>
+
+          <div style={styles.actionRow}>
+            <button style={styles.altBtn} onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              style={{
+                ...styles.saveBtn,
+                ...(totalLabels > 0
+                  ? {}
+                  : { background: '#d1d5db', cursor: 'not-allowed' }),
+              }}
+              disabled={totalLabels === 0}
+              onClick={handlePrint}
+            >
+              <Printer size={18} />
+              Print {totalLabels} label{totalLabels === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Print-only container — the CSS above hides it on screen */}
+      <div id="receiving-labels-print">
+        {printQueue.map((q) => (
+          <TagFace
+            key={q.key}
+            data={q.data}
+            barcodeSvg={q.barcodeSvg}
+            title="RECEIVING TAG"
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
 function SignaturePad({ title, onClose, onSave }) {
   const canvasRef = React.useRef(null);
   const [drawing, setDrawing] = useState(false);
@@ -1317,6 +1608,7 @@ const styles = {
   pill: { fontSize: '12px', fontWeight: 700, background: '#f3f4f6', color: '#374151', borderRadius: '999px', padding: '2px 10px' },
   lineCard: { border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px', marginBottom: '8px', background: '#fafafa' },
   miniLabel: { display: 'block', fontSize: '11px', fontWeight: 600, color: '#6b7280', marginBottom: '2px', marginTop: '6px' },
+  optionalHint: { fontSize: '10px', fontWeight: 500, color: '#9ca3af', fontStyle: 'italic' },
   miniInput: { width: '100%', border: '1px solid #d1d5db', borderRadius: '8px', padding: '6px 8px', fontSize: '13px', boxSizing: 'border-box', background: '#fff' },
   removeLineBtn: { display: 'flex', alignItems: 'center', gap: '3px', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: '4px' },
   addLotBtn: { display: 'inline-flex', alignItems: 'center', gap: '3px', background: '#f0fdf4', color: '#065f46', border: '1px solid #99f6e4', borderRadius: '8px', padding: '4px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' },
@@ -1338,4 +1630,16 @@ const styles = {
   sigClearBtn: { display: 'block', width: '100%', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', padding: '10px', textAlign: 'center', textDecoration: 'underline' },
   sigPadFrame: { border: '1px solid #d1d5db', borderRadius: '12px', background: '#fff', padding: '4px', height: '260px' },
   sigPadCanvas: { width: '100%', height: '100%', touchAction: 'none', background: '#fff', borderRadius: '10px', display: 'block' },
+
+  labelsBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '12px', padding: '13px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
+  labelListWrap: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '2px' },
+  labelRow: { display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#fafafa', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px' },
+  labelRowItem: { fontSize: '14px', fontWeight: 700 },
+  labelRowDesc: { fontSize: '12px', color: '#6b7280' },
+  labelRowMeta: { fontSize: '12px', color: '#374151', marginTop: '2px' },
+  labelCountArea: { width: '110px', display: 'flex', flexDirection: 'column', alignItems: 'stretch' },
+  labelCountInput: { width: '100%', border: '1px solid #d1d5db', borderRadius: '8px', padding: '6px 8px', fontSize: '15px', boxSizing: 'border-box', background: '#fff', textAlign: 'center', fontWeight: 700 },
+  labelCountQuickRow: { display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' },
+  quickBtn: { flex: 1, fontSize: '11px', fontWeight: 600, background: '#fff', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '3px 6px', cursor: 'pointer', minWidth: 0 },
+  labelTotalRow: { fontSize: '14px', color: '#374151', marginTop: '10px', textAlign: 'right' },
 };
