@@ -223,6 +223,27 @@ function recalcLineWeights(lines) {
 }
 
 // ---------- helpers ----------
+function sanitizeForBolNumber(str) {
+  // Turn "Whole Foods Market" into "WholeFoodsMarket", strip punctuation,
+  // cap at 20 chars so BOL numbers stay reasonable
+  if (!str) return '';
+  return String(str)
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '')
+    .slice(0, 20);
+}
+
+function buildBolNumber({ customer, po, existingNumbers }) {
+  const cust = sanitizeForBolNumber(customer) || 'Customer';
+  const poPart = sanitizeForBolNumber(po);
+  let base = `BOL-${cust}` + (poPart ? `-${poPart}` : '');
+  // If it already exists in the saved list, append -2, -3, etc.
+  if (!existingNumbers || !existingNumbers.has(base)) return base;
+  let n = 2;
+  while (existingNumbers.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
+}
+
 function formatDate(d) {
   if (!d) return '';
   const dt = new Date(d);
@@ -362,6 +383,7 @@ export default function BOLMaker() {
   const [bols, setBols] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [search, setSearch] = useState('');
+  const [showShipped, setShowShipped] = useState(false);
 
   const [items, setItems] = useState([]);
 
@@ -606,8 +628,11 @@ export default function BOLMaker() {
 
   const filteredBols = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return bols;
-    return bols.filter((b) => {
+    const base = showShipped
+      ? bols
+      : bols.filter((b) => b.status !== 'shipped');
+    if (!q) return base;
+    return base.filter((b) => {
       const inHeader =
         (b.bol_number || '').toLowerCase().includes(q) ||
         (b.whs_number || '').toLowerCase().includes(q) ||
@@ -621,7 +646,12 @@ export default function BOLMaker() {
       );
       return inHeader || inLines;
     });
-  }, [bols, search]);
+  }, [bols, search, showShipped]);
+
+  const shippedCount = useMemo(
+    () => bols.filter((b) => b.status === 'shipped').length,
+    [bols]
+  );
 
   const uniqueItems = useMemo(() => {
     const map = new Map();
@@ -897,8 +927,24 @@ export default function BOLMaker() {
     setSaving(true);
     setMessage('');
 
+    // Auto-generate BOL number from customer + PO if user left it blank.
+    // Existing BOLs (with editingId) keep their number unless the user cleared it.
+    let effectiveBolNumber = (header.bolNumber || '').trim();
+    if (!effectiveBolNumber) {
+      const existingNumbers = new Set(
+        (bols || [])
+          .map((b) => b.bol_number)
+          .filter(Boolean)
+      );
+      effectiveBolNumber = buildBolNumber({
+        customer: header.shipToName,
+        po: header.customerPo,
+        existingNumbers,
+      });
+    }
+
     const headerRow = {
-      bol_number: header.bolNumber || null,
+      bol_number: effectiveBolNumber || null,
       whs_number: header.whsNumber || null,
       sales_order_no: header.salesOrderNo || null,
       bol_date: header.bolDate || null,
@@ -1112,6 +1158,9 @@ export default function BOLMaker() {
               bols={filteredBols}
               search={search}
               setSearch={setSearch}
+              showShipped={showShipped}
+              setShowShipped={setShowShipped}
+              shippedCount={shippedCount}
               onNew={startNew}
               onOpen={openBol}
               onImport={() => {
@@ -1340,6 +1389,9 @@ function ListView({
   bols,
   search,
   setSearch,
+  showShipped,
+  setShowShipped,
+  shippedCount,
   onNew,
   onOpen,
   onImport,
@@ -1379,6 +1431,21 @@ function ListView({
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+
+      <div style={styles.filterChipRow}>
+        <button
+          style={{
+            ...styles.filterChip,
+            ...(showShipped ? styles.filterChipActive : {}),
+          }}
+          onClick={() => setShowShipped(!showShipped)}
+        >
+          {showShipped
+            ? `Hide shipped (${shippedCount})`
+            : `Show shipped (${shippedCount})`}
+        </button>
+      </div>
+
       <p style={styles.hint}>
         Tip: search a lot number to find every shipment that lot went out on.
       </p>
@@ -2737,6 +2804,9 @@ const styles = {
   checkboxOn: { background: '#0f766e', borderColor: '#0f766e' },
   filterCount: { fontSize: '12px', fontWeight: '600', color: '#9ca3af', marginLeft: 'auto' },
   hint: { fontSize: '12px', color: '#9ca3af', margin: '6px 2px 16px' },
+  filterChipRow: { display: 'flex', gap: '6px', margin: '10px 0 4px', flexWrap: 'wrap' },
+  filterChip: { display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '13px', fontWeight: 600, background: '#fff', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '999px', padding: '5px 12px', cursor: 'pointer' },
+  filterChipActive: { background: '#c8102e', color: '#fff', borderColor: '#c8102e' },
   empty: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px' },
   list: { display: 'flex', flexDirection: 'column', gap: '8px' },
   bolCard: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '14px', textAlign: 'left', cursor: 'pointer', width: '100%' },

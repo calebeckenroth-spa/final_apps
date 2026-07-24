@@ -11,6 +11,7 @@ import {
   PackageCheck,
   Calendar,
   Download,
+  PenLine,
 } from 'lucide-react';
 import { generatePdfFromNode } from '../../lib/pdfHelper.js';
 
@@ -47,6 +48,8 @@ const blankReceipt = () => ({
   seal_number: '',
   temp_at_arrival: '',
   notes: '',
+  receiver_signature: '',
+  receiver_signed_at: '',
 });
 
 export default function Receiving() {
@@ -66,6 +69,7 @@ export default function Receiving() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showSignaturePad, setShowSignaturePad] = useState(false);
 
   useEffect(() => {
     load();
@@ -134,6 +138,31 @@ export default function Receiving() {
   function addLine() {
     setLines((ls) => [...ls, blankLine()]);
   }
+
+  function addLotForItem(sourceLine) {
+    // Duplicate the item info (item_no, description, uom, po_line_id) but blank
+    // lot/qty/exp so the user just types the new lot + quantity.
+    setLines((ls) => {
+      const idx = ls.findIndex((l) => l._key === sourceLine._key);
+      if (idx < 0) return [...ls, blankLine()];
+      const newLot = {
+        _key: Math.random().toString(36).slice(2),
+        po_line_id: sourceLine.po_line_id || '',
+        item_no: sourceLine.item_no || '',
+        description: sourceLine.description || '',
+        quantity: '',
+        uom: sourceLine.uom || 'CASE',
+        lot_no: '',
+        expiration_date: '',
+        discrepancy: '',
+        notes: '',
+      };
+      // Insert right after the source line so grouping is visually preserved
+      const before = ls.slice(0, idx + 1);
+      const after = ls.slice(idx + 1);
+      return [...before, newLot, ...after];
+    });
+  }
   function removeLine(key) {
     setLines((ls) => ls.filter((l) => l._key !== key));
   }
@@ -201,6 +230,8 @@ export default function Receiving() {
       seal_number: r.seal_number || '',
       temp_at_arrival: r.temp_at_arrival || '',
       notes: r.notes || '',
+      receiver_signature: r.receiver_signature || '',
+      receiver_signed_at: r.receiver_signed_at || '',
     });
     const { data: lineRows } = await supabase
       .schema('procurement')
@@ -248,6 +279,8 @@ export default function Receiving() {
         seal_number: header.seal_number || null,
         temp_at_arrival: header.temp_at_arrival || null,
         notes: header.notes || null,
+        receiver_signature: header.receiver_signature || null,
+        receiver_signed_at: header.receiver_signed_at || null,
       };
       let receiptId;
       if (editingId) {
@@ -378,11 +411,33 @@ export default function Receiving() {
       setMessage('Save the receipt first before downloading');
       return;
     }
+    if (!header.po_id) {
+      setMessage(
+        'Cannot download: no PO linked to this receipt. Link a PO first.'
+      );
+      return;
+    }
+    const po = pos.find((p) => p.id === header.po_id);
+    if (!po || !po.po_number) {
+      setMessage(
+        'Cannot download: linked PO has no PO number. Update the PO first.'
+      );
+      return;
+    }
+
+    // Filename: {VendorName}-{PONumber}.pdf, sanitized so file systems are happy
+    const clean = (s) =>
+      String(s || '')
+        .replace(/[^\w\s-]/g, '')  // strip punctuation
+        .replace(/\s+/g, '')         // strip spaces
+        .slice(0, 40);
+    const vendorPart =
+      clean(header.vendor_name) || clean(po.vendor_name) || 'Vendor';
+    const poPart = clean(po.po_number);
+    const filename = `${vendorPart}-${poPart}.pdf`;
+
     try {
-      await generatePdfFromNode({
-        nodeId: 'receipt-print',
-        filename: `${header.receipt_number}.pdf`,
-      });
+      await generatePdfFromNode({ nodeId: 'receipt-print', filename });
     } catch (e) {
       setMessage('Error making PDF: ' + (e.message || 'unknown'));
     }
@@ -456,6 +511,7 @@ export default function Receiving() {
             lines={lines}
             setLine={setLine}
             addLine={addLine}
+            addLotForItem={addLotForItem}
             removeLine={removeLine}
             vendors={vendors}
             pos={pos}
@@ -469,6 +525,11 @@ export default function Receiving() {
             onRequestDelete={() => setConfirmDelete(true)}
             onCancelDelete={() => setConfirmDelete(false)}
             onConfirmDelete={deleteReceipt}
+            onOpenSignaturePad={() => setShowSignaturePad(true)}
+            onClearSignature={() => {
+              setH('receiver_signature', '');
+              setH('receiver_signed_at', '');
+            }}
           />
         )}
       </div>
@@ -480,6 +541,18 @@ export default function Receiving() {
         >
           <ReceiptDocument header={header} lines={lines} />
         </div>
+      ) : null}
+
+      {showSignaturePad ? (
+        <SignaturePad
+          title="Sign for receipt"
+          onClose={() => setShowSignaturePad(false)}
+          onSave={(png) => {
+            setH('receiver_signature', png);
+            setH('receiver_signed_at', new Date().toISOString());
+            setShowSignaturePad(false);
+          }}
+        />
       ) : null}
     </div>
   );
@@ -598,8 +671,27 @@ function ReceiptDocument({ header, lines }) {
 
       <div style={docStyles.signRow}>
         <div style={docStyles.signBox}>
-          <div style={docStyles.signLine}></div>
-          <div style={docStyles.signLabel}>Received by (signature)</div>
+          {header.receiver_signature ? (
+            <img
+              src={header.receiver_signature}
+              alt="Received by"
+              style={{
+                maxWidth: '100%',
+                maxHeight: '50px',
+                display: 'block',
+                marginBottom: '2px',
+              }}
+            />
+          ) : (
+            <div style={docStyles.signLine}></div>
+          )}
+          <div style={docStyles.signLabel}>
+            Received by (signature)
+            {header.receiver_signed_at
+              ? ' — ' +
+                new Date(header.receiver_signed_at).toLocaleDateString('en-US')
+              : ''}
+          </div>
         </div>
         <div style={docStyles.signBox}>
           <div style={docStyles.signLine}></div>
@@ -736,6 +828,7 @@ function EditView({
   lines,
   setLine,
   addLine,
+  addLotForItem,
   removeLine,
   vendors,
   pos,
@@ -749,6 +842,8 @@ function EditView({
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
+  onOpenSignaturePad,
+  onClearSignature,
 }) {
   return (
     <>
@@ -958,7 +1053,19 @@ function EditView({
                 />
               </>
             ) : null}
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                style={styles.addLotBtn}
+                onClick={() => addLotForItem(l)}
+                disabled={!l.item_no}
+                title={
+                  !l.item_no
+                    ? 'Pick the item first'
+                    : 'Add another lot for this same item'
+                }
+              >
+                <Plus size={12} /> Another lot for this item
+              </button>
               <button
                 style={styles.removeLineBtn}
                 onClick={() => removeLine(l._key)}
@@ -971,6 +1078,36 @@ function EditView({
         <button style={styles.addLineBtn} onClick={addLine}>
           <Plus size={14} /> Add line
         </button>
+      </div>
+
+      {/* Receiver signature */}
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Receiver signature</div>
+        {header.receiver_signature ? (
+          <>
+            <div style={styles.sigDisplayFrame}>
+              <img
+                src={header.receiver_signature}
+                alt="Receiver signature"
+                style={styles.sigDisplayImg}
+              />
+            </div>
+            <div style={styles.sigMeta}>
+              Signed{' '}
+              {header.receiver_signed_at
+                ? new Date(header.receiver_signed_at).toLocaleString()
+                : ''}
+            </div>
+            <button style={styles.sigClearBtn} onClick={onClearSignature}>
+              Clear &amp; re-sign
+            </button>
+          </>
+        ) : (
+          <button style={styles.sigBtn} onClick={onOpenSignaturePad}>
+            <PenLine size={18} />
+            Sign to confirm receipt
+          </button>
+        )}
       </div>
 
       {message && (
@@ -1024,6 +1161,125 @@ function EditView({
   );
 }
 
+// ---------- Signature pad (finger/stylus on tablet, saves as base64 PNG) ----------
+function SignaturePad({ title, onClose, onSave }) {
+  const canvasRef = React.useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [hasInk, setHasInk] = useState(false);
+
+  React.useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = c.getBoundingClientRect();
+    c.width = rect.width * dpr;
+    c.height = rect.height * dpr;
+    const ctx = c.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#111';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, rect.width, rect.height);
+  }, []);
+
+  function getPos(e) {
+    const c = canvasRef.current;
+    const rect = c.getBoundingClientRect();
+    const t = e.touches && e.touches[0];
+    const x = (t ? t.clientX : e.clientX) - rect.left;
+    const y = (t ? t.clientY : e.clientY) - rect.top;
+    return { x, y };
+  }
+
+  function start(e) {
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext('2d');
+    const { x, y } = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setDrawing(true);
+  }
+
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext('2d');
+    const { x, y } = getPos(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    if (!hasInk) setHasInk(true);
+  }
+
+  function end() {
+    setDrawing(false);
+  }
+
+  function clearPad() {
+    const c = canvasRef.current;
+    const ctx = c.getContext('2d');
+    const rect = c.getBoundingClientRect();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, rect.width, rect.height);
+    setHasInk(false);
+  }
+
+  function save() {
+    if (!hasInk) return;
+    const png = canvasRef.current.toDataURL('image/png');
+    onSave(png);
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={{ ...styles.modal, maxHeight: '90vh' }}>
+        <div style={styles.modalHead}>
+          <span style={styles.modalTitle}>{title || 'Sign here'}</span>
+          <button style={styles.iconBtn} onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <p style={{ ...styles.helpHint, marginTop: 0 }}>
+          Sign with your finger or a stylus. Tap Save when done.
+        </p>
+
+        <div style={styles.sigPadFrame}>
+          <canvas
+            ref={canvasRef}
+            style={styles.sigPadCanvas}
+            onMouseDown={start}
+            onMouseMove={move}
+            onMouseUp={end}
+            onMouseLeave={end}
+            onTouchStart={start}
+            onTouchMove={move}
+            onTouchEnd={end}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+          <button style={styles.altBtn} onClick={clearPad}>
+            Clear
+          </button>
+          <button
+            style={{
+              ...styles.saveBtn,
+              ...(hasInk ? {} : { background: '#d1d5db', cursor: 'not-allowed' }),
+            }}
+            onClick={save}
+            disabled={!hasInk}
+          >
+            <Save size={18} />
+            Save signature
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const styles = {
   container: { minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8f8f8' },
   header: { backgroundColor: '#c8102e', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', position: 'sticky', top: 0, zIndex: 100 },
@@ -1063,6 +1319,7 @@ const styles = {
   miniLabel: { display: 'block', fontSize: '11px', fontWeight: 600, color: '#6b7280', marginBottom: '2px', marginTop: '6px' },
   miniInput: { width: '100%', border: '1px solid #d1d5db', borderRadius: '8px', padding: '6px 8px', fontSize: '13px', boxSizing: 'border-box', background: '#fff' },
   removeLineBtn: { display: 'flex', alignItems: 'center', gap: '3px', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: '4px' },
+  addLotBtn: { display: 'inline-flex', alignItems: 'center', gap: '3px', background: '#f0fdf4', color: '#065f46', border: '1px solid #99f6e4', borderRadius: '8px', padding: '4px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' },
   addLineBtn: { display: 'flex', alignItems: 'center', gap: '4px', background: '#fff1f2', color: '#c8102e', border: '1px dashed #fecdd3', borderRadius: '10px', padding: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%', justifyContent: 'center' },
 
   message: { fontSize: '14px', fontWeight: '600', marginBottom: '10px' },
@@ -1073,4 +1330,12 @@ const styles = {
   deleteConfirmBox: { background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '12px', padding: '14px', marginTop: '16px' },
   deleteConfirmText: { fontSize: '14px', fontWeight: '600', color: '#9f1239', marginBottom: '12px', textAlign: 'center' },
   deleteBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#c8102e', color: '#fff', border: 'none', borderRadius: '12px', padding: '12px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
+
+  sigBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', background: '#fff', color: '#c8102e', border: '1px dashed #fecdd3', borderRadius: '12px', padding: '18px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
+  sigDisplayFrame: { border: '1px solid #d1d5db', borderRadius: '10px', background: '#fff', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  sigDisplayImg: { maxWidth: '100%', maxHeight: '120px', display: 'block' },
+  sigMeta: { fontSize: '12px', color: '#6b7280', marginTop: '6px' },
+  sigClearBtn: { display: 'block', width: '100%', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', padding: '10px', textAlign: 'center', textDecoration: 'underline' },
+  sigPadFrame: { border: '1px solid #d1d5db', borderRadius: '12px', background: '#fff', padding: '4px', height: '260px' },
+  sigPadCanvas: { width: '100%', height: '100%', touchAction: 'none', background: '#fff', borderRadius: '10px', display: 'block' },
 };
