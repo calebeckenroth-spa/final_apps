@@ -13,6 +13,7 @@ import {
   Calendar,
   Plus,
   ChevronRight,
+  ChefHat,
 } from 'lucide-react';
 
 const apps = [
@@ -119,6 +120,17 @@ const apps = [
     available: true,
     group: 'Procurement',
   },
+  // Production
+  {
+    id: 'recipe-learner',
+    name: 'Recipe Learner',
+    description: 'Learn actual recipes from posted assembly runs',
+    icon: <ChefHat size={32} />,
+    color: '#c8102e',
+    route: '/recipe-learner',
+    available: true,
+    group: 'Production',
+  },
   {
     id: 'more',
     name: 'More Coming Soon',
@@ -131,7 +143,7 @@ const apps = [
   },
 ];
 
-const GROUP_ORDER = ['Operations', 'Shipping', 'Procurement', 'Other'];
+const GROUP_ORDER = ['Operations', 'Shipping', 'Procurement', 'Production', 'Other'];
 
 export default function Home() {
   const navigate = useNavigate();

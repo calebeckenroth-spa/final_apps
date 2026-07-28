@@ -32,6 +32,9 @@ import POTracker from './apps/po-tracker/POTracker.jsx';
 import Receiving from './apps/receiving/Receiving.jsx';
 import POCalendar from './apps/po-calendar/POCalendar.jsx';
 
+// Production suite
+import RecipeLearner from './apps/recipe-learner/RecipeLearner.jsx';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -68,6 +71,9 @@ export default function App() {
         <Route path="/po-tracker" element={<POTracker />} />
         <Route path="/receiving" element={<Receiving />} />
         <Route path="/po-calendar" element={<POCalendar />} />
+
+        {/* Production */}
+        <Route path="/recipe-learner" element={<RecipeLearner />} />
 
         {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />
