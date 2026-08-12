@@ -253,7 +253,7 @@ export default function Home() {
 
       <div style={styles.footer}>
         <p style={styles.footerText}>
-          El Pinto Foods © {new Date().getFullYear()}
+          El Pinto Foods LLC © {new Date().getFullYear()}
         </p>
       </div>
     </div>
