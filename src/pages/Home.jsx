@@ -16,6 +16,7 @@ import {
   ChefHat,
   Factory,
   TrendingUp,
+  Bell,
 } from 'lucide-react';
 
 const apps = [
@@ -119,6 +120,16 @@ const apps = [
     icon: <Users size={32} />,
     color: '#1d4ed8',
     route: '/vendors',
+    available: true,
+    group: 'Procurement',
+  },
+  {
+    id: 'purchase-reminders',
+    name: 'Purchase Reminders',
+    description: 'Recurring orders & things to remember to buy',
+    icon: <Bell size={32} />,
+    color: '#a16207',
+    route: '/purchase-reminders',
     available: true,
     group: 'Procurement',
   },

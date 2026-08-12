@@ -31,6 +31,7 @@ import ReorderWatch from './apps/reorder/ReorderWatch.jsx';
 import POTracker from './apps/po-tracker/POTracker.jsx';
 import Receiving from './apps/receiving/Receiving.jsx';
 import POCalendar from './apps/po-calendar/POCalendar.jsx';
+import PurchaseReminders from './apps/purchase-reminders/PurchaseReminders.jsx';
 
 // Production suite
 import RecipeLearner from './apps/recipe-learner/RecipeLearner.jsx';
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/po-tracker" element={<POTracker />} />
         <Route path="/receiving" element={<Receiving />} />
         <Route path="/po-calendar" element={<POCalendar />} />
+        <Route path="/purchase-reminders" element={<PurchaseReminders />} />
 
         {/* Production */}
         <Route path="/recipe-learner" element={<RecipeLearner />} />

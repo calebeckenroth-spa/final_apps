@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient.js';
 import {
   ChevronLeft,
@@ -47,6 +47,7 @@ const blankPo = () => ({
 
 export default function POTracker() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [view, setView] = useState('list');
   const [pos, setPos] = useState([]);
   const [vendors, setVendors] = useState([]);
@@ -63,10 +64,86 @@ export default function POTracker() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Items linked to the currently-selected vendor (for line item picker)
   const [vendorItems, setVendorItems] = useState([]);
+  // Reminder pre-fill state
+  const [reminderPrefill, setReminderPrefill] = useState(null);
 
   useEffect(() => {
     load();
   }, []);
+
+  // If arriving with ?fromReminder=<uuid>, fetch the reminder and pre-fill
+  // a new PO with its vendor + item info.
+  useEffect(() => {
+    const remId = searchParams.get('fromReminder');
+    if (!remId) return;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .schema('procurement')
+          .from('purchase_reminders')
+          .select('*')
+          .eq('id', remId)
+          .single();
+        if (error || !data) return;
+        setReminderPrefill(data);
+      } catch (e) {
+        // silent — reminder may not exist
+      }
+    })();
+  }, [searchParams]);
+
+  // Once we have pos loaded AND we have a reminder to apply, start a new PO
+  // pre-populated. This runs once the load has finished and vendorItems for
+  // the reminder's vendor are ready.
+  useEffect(() => {
+    if (!reminderPrefill || loading) return;
+    (async () => {
+      // Auto-generate PO number
+      const year = new Date().getFullYear();
+      const seq = String(pos.length + 1).padStart(4, '0');
+      setEditingId(null);
+      setHeader({
+        ...blankPo(),
+        po_number: `EPPO-${year}-${seq}`,
+        vendor_id: reminderPrefill.vendor_id || '',
+        vendor_name: reminderPrefill.vendor_name || '',
+        expected_date: reminderPrefill.suggested_delivery_date || '',
+        notes: reminderPrefill.title
+          ? `From reminder: ${reminderPrefill.title}` +
+            (reminderPrefill.notes ? '\n' + reminderPrefill.notes : '')
+          : '',
+      });
+      // Load vendor items for this vendor so the line picker works
+      if (reminderPrefill.vendor_id) {
+        const { data: vi } = await supabase
+          .schema('procurement')
+          .from('vendor_items')
+          .select('*')
+          .eq('vendor_id', reminderPrefill.vendor_id)
+          .order('item_no');
+        setVendorItems(vi || []);
+      }
+      // Pre-fill the first line if the reminder points at an item
+      if (reminderPrefill.item_no) {
+        setLines([
+          {
+            _key: Math.random().toString(36).slice(2),
+            item_no: reminderPrefill.item_no,
+            description: reminderPrefill.item_description || '',
+            quantity: reminderPrefill.suggested_quantity ?? '',
+            uom: reminderPrefill.suggested_uom || 'CASE',
+            unit_price: '',
+          },
+        ]);
+      } else {
+        setLines([blankLine()]);
+      }
+      setMessage('');
+      setConfirmDelete(false);
+      setView('edit');
+      setReminderPrefill(null); // consume it
+    })();
+  }, [reminderPrefill, loading, pos.length]);
 
   async function load() {
     setLoading(true);
