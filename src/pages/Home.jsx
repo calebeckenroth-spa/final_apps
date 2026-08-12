@@ -14,6 +14,8 @@ import {
   Plus,
   ChevronRight,
   ChefHat,
+  Factory,
+  TrendingUp,
 } from 'lucide-react';
 
 const apps = [
@@ -128,6 +130,26 @@ const apps = [
     icon: <ChefHat size={32} />,
     color: '#c8102e',
     route: '/recipe-learner',
+    available: true,
+    group: 'Production',
+  },
+  {
+    id: 'production-schedule',
+    name: 'Production Schedule',
+    description: 'Plan production runs by day, calendar or list view',
+    icon: <Factory size={32} />,
+    color: '#1d4ed8',
+    route: '/production-schedule',
+    available: true,
+    group: 'Production',
+  },
+  {
+    id: 'ingredient-forecast',
+    name: 'Ingredient Forecast',
+    description: 'What to buy — schedule × recipes minus on-hand',
+    icon: <TrendingUp size={32} />,
+    color: '#065f46',
+    route: '/ingredient-forecast',
     available: true,
     group: 'Production',
   },

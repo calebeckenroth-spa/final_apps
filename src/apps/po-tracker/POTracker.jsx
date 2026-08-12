@@ -820,6 +820,18 @@ function EditView({
                         if (vi.uom) setLine(l._key, 'uom', vi.uom);
                         if (vi.last_unit_price != null)
                           setLine(l._key, 'unit_price', String(vi.last_unit_price));
+                        // If we know the vendor's lead time for this item AND
+                        // the PO doesn't yet have an expected date, suggest
+                        // one based on today + lead time. User can override.
+                        if (
+                          vi.lead_time_days != null &&
+                          vi.lead_time_days >= 0 &&
+                          !header.expected_date
+                        ) {
+                          const d = new Date();
+                          d.setDate(d.getDate() + Number(vi.lead_time_days));
+                          setH('expected_date', d.toISOString().slice(0, 10));
+                        }
                       }
                     }}
                   >

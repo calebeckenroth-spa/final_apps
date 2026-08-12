@@ -60,6 +60,7 @@ export default function Receiving() {
   const [view, setView] = useState('list');
   const [receipts, setReceipts] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [vendorItems, setVendorItems] = useState([]);
   const [pos, setPos] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -83,7 +84,7 @@ export default function Receiving() {
 
   async function load() {
     setLoading(true);
-    const [recRes, vendRes, posRes] = await Promise.all([
+    const [recRes, vendRes, posRes, viRes] = await Promise.all([
       supabase
         .schema('procurement')
         .from('receipts')
@@ -93,7 +94,7 @@ export default function Receiving() {
       supabase
         .schema('procurement')
         .from('vendors')
-        .select('id, name')
+        .select('id, name, address, phone, email, primary_contact')
         .eq('active', true)
         .order('name'),
       supabase
@@ -103,12 +104,28 @@ export default function Receiving() {
         .in('status', ['open', 'partially_received'])
         .order('order_date', { ascending: false })
         .limit(500),
+      supabase
+        .schema('procurement')
+        .from('vendor_items')
+        .select('vendor_id, item_no, vendor_ref_no'),
     ]);
     setReceipts(recRes.data || []);
     setVendors(vendRes.data || []);
     setPos(posRes.data || []);
+    setVendorItems(viRes.data || []);
     setLoading(false);
   }
+
+  // Lookup map: `${vendor_id}::${item_no}` -> vendor_ref_no
+  const vendorRefByVendorAndItem = useMemo(() => {
+    const m = new Map();
+    for (const vi of vendorItems) {
+      if (vi.vendor_ref_no) {
+        m.set(`${vi.vendor_id}::${vi.item_no}`, vi.vendor_ref_no);
+      }
+    }
+    return m;
+  }, [vendorItems]);
 
   const vendorNameById = useMemo(() => {
     const m = new Map();
@@ -576,7 +593,12 @@ export default function Receiving() {
           id="receipt-print"
           style={{ position: 'absolute', left: '-10000px', top: 0 }}
         >
-          <ReceiptDocument header={header} lines={lines} />
+          <ReceiptDocument
+            header={header}
+            lines={lines}
+            vendor={vendors.find((v) => v.id === header.vendor_id) || null}
+            vendorRefByItem={vendorRefByVendorAndItem}
+          />
         </div>
       ) : null}
 
@@ -606,7 +628,7 @@ export default function Receiving() {
 }
 
 // Printable Receipt / Proof of Delivery document
-function ReceiptDocument({ header, lines }) {
+function ReceiptDocument({ header, lines, vendor, vendorRefByItem }) {
   const printLines = lines.filter(
     (l) => (l.item_no || '').trim() || (l.description || '').trim()
   );
@@ -615,6 +637,9 @@ function ReceiptDocument({ header, lines }) {
     0
   );
   const anyDiscrepancy = printLines.some((l) => l.discrepancy);
+  const anyVendorRef = printLines.some(
+    (l) => vendorRefByItem && vendorRefByItem.get(`${header.vendor_id}::${l.item_no}`)
+  );
   return (
     <div style={docStyles.page}>
       <div style={docStyles.headerRow}>
@@ -634,27 +659,43 @@ function ReceiptDocument({ header, lines }) {
         <tbody>
           <tr>
             <td style={docStyles.infoCellTall}>
-              <span style={docStyles.infoLabel}>Vendor:</span>
+              <span style={docStyles.infoLabel}>Ship From (Vendor):</span>
               <div style={docStyles.infoStrong}>
-                {header.vendor_name || ''}
+                {header.vendor_name || (vendor && vendor.name) || ''}
               </div>
+              {vendor && vendor.address ? (
+                <div style={docStyles.infoAddr}>{vendor.address}</div>
+              ) : null}
+              {vendor && (vendor.primary_contact || vendor.phone) ? (
+                <div style={docStyles.infoSmall}>
+                  {vendor.primary_contact || ''}
+                  {vendor.primary_contact && vendor.phone ? ' · ' : ''}
+                  {vendor.phone || ''}
+                </div>
+              ) : null}
             </td>
             <td style={docStyles.infoCellTall}>
-              <span style={docStyles.infoLabel}>Received By:</span>
-              <div style={docStyles.infoStrong}>
-                {header.received_by || ''}
-              </div>
+              <span style={docStyles.infoLabel}>Ship To (El Pinto):</span>
+              <div style={docStyles.infoStrong}>El Pinto Foods LLC</div>
               <div style={docStyles.infoAddr}>
-                Date: {header.received_date}
+                10500 4th St NW{'\n'}Albuquerque, NM 87114
+              </div>
+              <div style={docStyles.infoSmall}>
+                Location: {header.received_at || 'ABQEP'}
               </div>
             </td>
           </tr>
           <RowInfoPair
             shaded
+            l={['Received By:', header.received_by]}
+            r={['Date:', header.received_date]}
+          />
+          <RowInfoPair
             l={['Carrier:', header.carrier]}
             r={['Trailer #:', header.trailer_number]}
           />
           <RowInfoPair
+            shaded
             l={['Seal #:', header.seal_number]}
             r={['Temp at arrival:', header.temp_at_arrival]}
           />
@@ -666,6 +707,9 @@ function ReceiptDocument({ header, lines }) {
         <thead>
           <tr>
             <th style={docStyles.th}>Item #</th>
+            {anyVendorRef ? (
+              <th style={docStyles.th}>Vendor Ref #</th>
+            ) : null}
             <th style={docStyles.th}>Description</th>
             <th style={docStyles.thR}>Qty</th>
             <th style={docStyles.th}>UoM</th>
@@ -675,26 +719,34 @@ function ReceiptDocument({ header, lines }) {
           </tr>
         </thead>
         <tbody>
-          {printLines.map((l, i) => (
-            <tr key={i}>
-              <td style={docStyles.td}>{l.item_no}</td>
-              <td style={docStyles.td}>{l.description}</td>
-              <td style={docStyles.tdR}>{l.quantity}</td>
-              <td style={docStyles.td}>{l.uom}</td>
-              <td style={docStyles.td}>{l.lot_no}</td>
-              <td style={docStyles.td}>{l.expiration_date}</td>
-              <td style={docStyles.td}>
-                {l.discrepancy ? (
-                  <span style={docStyles.flagBad}>
-                    {l.discrepancy}
-                    {l.notes ? ' — ' + l.notes : ''}
-                  </span>
-                ) : (
-                  ''
-                )}
-              </td>
-            </tr>
-          ))}
+          {printLines.map((l, i) => {
+            const ref = vendorRefByItem
+              ? vendorRefByItem.get(`${header.vendor_id}::${l.item_no}`) || ''
+              : '';
+            return (
+              <tr key={i}>
+                <td style={docStyles.td}>{l.item_no}</td>
+                {anyVendorRef ? (
+                  <td style={docStyles.td}>{ref}</td>
+                ) : null}
+                <td style={docStyles.td}>{l.description}</td>
+                <td style={docStyles.tdR}>{l.quantity}</td>
+                <td style={docStyles.td}>{l.uom}</td>
+                <td style={docStyles.td}>{l.lot_no}</td>
+                <td style={docStyles.td}>{l.expiration_date}</td>
+                <td style={docStyles.td}>
+                  {l.discrepancy ? (
+                    <span style={docStyles.flagBad}>
+                      {l.discrepancy}
+                      {l.notes ? ' — ' + l.notes : ''}
+                    </span>
+                  ) : (
+                    ''
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -788,6 +840,7 @@ const docStyles = {
   infoLabel: { fontWeight: 700 },
   infoStrong: { fontWeight: 700, fontSize: '12px', marginTop: '2px' },
   infoAddr: { fontSize: '11px', whiteSpace: 'pre-wrap' },
+  infoSmall: { fontSize: '10px', color: '#374151', marginTop: '3px' },
   heading: { fontSize: '15px', fontWeight: 700, margin: '14px 0 6px' },
   linesTable: { width: '100%', borderCollapse: 'collapse', marginBottom: '10px' },
   th: { border: '1px solid #999', padding: '5px 6px', textAlign: 'left', background: '#f0f0f0', fontSize: '10px', fontFamily: 'Arial, sans-serif' },

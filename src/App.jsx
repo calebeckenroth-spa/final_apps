@@ -34,6 +34,8 @@ import POCalendar from './apps/po-calendar/POCalendar.jsx';
 
 // Production suite
 import RecipeLearner from './apps/recipe-learner/RecipeLearner.jsx';
+import ProductionSchedule from './apps/production-schedule/ProductionSchedule.jsx';
+import IngredientForecast from './apps/ingredient-forecast/IngredientForecast.jsx';
 
 export default function App() {
   return (
@@ -74,6 +76,8 @@ export default function App() {
 
         {/* Production */}
         <Route path="/recipe-learner" element={<RecipeLearner />} />
+        <Route path="/production-schedule" element={<ProductionSchedule />} />
+        <Route path="/ingredient-forecast" element={<IngredientForecast />} />
 
         {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />

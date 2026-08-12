@@ -785,8 +785,17 @@ function VendorItemsSection({
 function LinkedItemRow({ li, onUnlink, onUpdate }) {
   const [uom, setUom] = useState(li.uom || '');
   const [price, setPrice] = useState(li.last_unit_price ?? '');
+  const [vendorRef, setVendorRef] = useState(li.vendor_ref_no || '');
+  const [leadTime, setLeadTime] = useState(li.lead_time_days ?? '');
   const [notes, setNotes] = useState(li.notes || '');
   const [dirty, setDirty] = useState(false);
+
+  const flush = (patch) => {
+    if (dirty) {
+      onUpdate(patch);
+      setDirty(false);
+    }
+  };
 
   return (
     <div style={styles.linkedItemRow}>
@@ -799,7 +808,21 @@ function LinkedItemRow({ li, onUnlink, onUpdate }) {
           <X size={12} /> Remove
         </button>
       </div>
+
       <div style={styles.twoCol}>
+        <div style={{ flex: 1 }}>
+          <label style={styles.miniLabel}>Vendor ref # (their code)</label>
+          <input
+            style={styles.miniInput}
+            value={vendorRef}
+            placeholder="How the vendor codes it"
+            onChange={(e) => {
+              setVendorRef(e.target.value);
+              setDirty(true);
+            }}
+            onBlur={() => flush({ vendor_ref_no: vendorRef || null })}
+          />
+        </div>
         <div style={{ flex: 1 }}>
           <label style={styles.miniLabel}>UoM</label>
           <input
@@ -810,14 +833,12 @@ function LinkedItemRow({ li, onUnlink, onUpdate }) {
               setUom(e.target.value);
               setDirty(true);
             }}
-            onBlur={() => {
-              if (dirty) {
-                onUpdate({ uom: uom || null });
-                setDirty(false);
-              }
-            }}
+            onBlur={() => flush({ uom: uom || null })}
           />
         </div>
+      </div>
+
+      <div style={styles.twoCol}>
         <div style={{ flex: 1 }}>
           <label style={styles.miniLabel}>Last unit price</label>
           <input
@@ -829,17 +850,30 @@ function LinkedItemRow({ li, onUnlink, onUpdate }) {
               setPrice(e.target.value);
               setDirty(true);
             }}
-            onBlur={() => {
-              if (dirty) {
-                onUpdate({
-                  last_unit_price: price === '' ? null : Number(price),
-                });
-                setDirty(false);
-              }
+            onBlur={() =>
+              flush({ last_unit_price: price === '' ? null : Number(price) })
+            }
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={styles.miniLabel}>Lead time (days)</label>
+          <input
+            style={styles.miniInput}
+            type="number"
+            min="0"
+            value={leadTime}
+            placeholder="e.g. 7"
+            onChange={(e) => {
+              setLeadTime(e.target.value);
+              setDirty(true);
             }}
+            onBlur={() =>
+              flush({ lead_time_days: leadTime === '' ? null : Number(leadTime) })
+            }
           />
         </div>
       </div>
+
       {li.last_purchase_date ? (
         <div style={styles.lastPurchase}>
           Last purchased: {li.last_purchase_date}
