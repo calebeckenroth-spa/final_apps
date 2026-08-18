@@ -596,6 +596,7 @@ export default function Receiving() {
             header={header}
             lines={lines}
             vendor={vendors.find((v) => v.id === header.vendor_id) || null}
+            linkedPo={pos.find((p) => p.id === header.po_id) || null}
             vendorRefByItem={vendorRefByVendorAndItem}
           />
         </div>
@@ -627,7 +628,7 @@ export default function Receiving() {
 }
 
 // Printable Receipt / Proof of Delivery document
-function ReceiptDocument({ header, lines, vendor, vendorRefByItem }) {
+function ReceiptDocument({ header, lines, vendor, linkedPo, vendorRefByItem }) {
   const printLines = lines.filter(
     (l) => (l.item_no || '').trim() || (l.description || '').trim()
   );
@@ -651,6 +652,9 @@ function ReceiptDocument({ header, lines, vendor, vendorRefByItem }) {
         <div style={{ textAlign: 'right' }}>
           <div style={docStyles.docTitle}>RECEIVING RECORD</div>
           <div style={docStyles.docNumber}>{header.receipt_number}</div>
+          {linkedPo && linkedPo.po_number ? (
+            <div style={docStyles.poRef}>PO: {linkedPo.po_number}</div>
+          ) : null}
         </div>
       </div>
 
@@ -833,6 +837,7 @@ const docStyles = {
   brandAddr: { fontSize: '11px', color: '#374151', marginTop: '4px' },
   docTitle: { fontSize: '20px', fontWeight: 700, color: '#111' },
   docNumber: { fontSize: '14px', fontWeight: 600, color: '#c8102e', marginTop: '2px' },
+  poRef: { fontSize: '12px', fontWeight: 600, color: '#374151', marginTop: '2px' },
   infoTable: { width: '100%', borderCollapse: 'collapse', border: '1px solid #999', marginBottom: '12px', tableLayout: 'fixed' },
   infoCellTall: { border: '1px solid #ccc', padding: '6px 8px', verticalAlign: 'top', width: '50%' },
   infoCell: { border: '1px solid #ccc', padding: '4px 8px', verticalAlign: 'top', width: '50%', fontSize: '11px' },
