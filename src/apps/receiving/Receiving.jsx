@@ -101,9 +101,8 @@ export default function Receiving() {
         .schema('procurement')
         .from('pos')
         .select('id, po_number, vendor_id, vendor_name, status')
-        .in('status', ['open', 'partially_received'])
         .order('order_date', { ascending: false })
-        .limit(500),
+        .limit(1000),
       supabase
         .schema('procurement')
         .from('vendor_items')
@@ -977,11 +976,21 @@ function EditView({
           onChange={(e) => selectPo(e.target.value)}
         >
           <option value="">(no PO — record freely)</option>
-          {pos.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.po_number} — {p.vendor_name || '(no vendor)'}
-            </option>
-          ))}
+          {pos
+            .filter(
+              (p) =>
+                p.status === 'open' ||
+                p.status === 'partially_received' ||
+                p.id === header.po_id
+            )
+            .map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.po_number} — {p.vendor_name || '(no vendor)'}
+                {p.status === 'received' || p.status === 'closed'
+                  ? ' (closed)'
+                  : ''}
+              </option>
+            ))}
         </select>
         <p style={styles.helpHint}>
           Selecting a PO auto-fills the vendor and drops in the ordered line
