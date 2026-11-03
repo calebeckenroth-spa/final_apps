@@ -14,7 +14,7 @@ import ReviewSession from './apps/cycle-counter/pages/ReviewSession.jsx';
 import Export from './apps/cycle-counter/pages/Export.jsx';
 
 // Shipping Tags
-import ShippingTags from './apps/shipping-tags/ShippingTags.jsx';
+import ReceivingTags from './apps/receiving-tags/ReceivingTags.jsx';
 
 // BOL Maker (current shipments)
 import BOLMaker from './apps/bol/BOLMaker.jsx';
@@ -57,7 +57,12 @@ export default function App() {
         </Route>
 
         {/* Shipping Tags */}
-        <Route path="/shipping-tags" element={<ShippingTags />} />
+        <Route path="/receiving-tags" element={<ReceivingTags />} />
+        {/* Old shipping-tags URL redirects to the renamed receiving-tags app */}
+        <Route
+          path="/shipping-tags"
+          element={<Navigate to="/receiving-tags" replace />}
+        />
 
         {/* BOL Maker (current) */}
         <Route path="/bol" element={<BOLMaker />} />

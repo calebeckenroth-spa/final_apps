@@ -63,14 +63,14 @@ const apps = [
     group: 'Shipping',
   },
   {
-    id: 'shipping',
-    name: 'Shipping Tags',
-    description: 'Create and print 4x6 shipping tags',
-    icon: <Truck size={32} />,
+    id: 'receiving-tags',
+    name: 'Receiving Tags',
+    description: 'Print 4x6 lot labels for items received',
+    icon: <PackageCheck size={32} />,
     color: '#c8102e',
-    route: '/shipping-tags',
+    route: '/receiving-tags',
     available: true,
-    group: 'Shipping',
+    group: 'Operations',
   },
   // Procurement
   {
@@ -253,7 +253,7 @@ export default function Home() {
 
       <div style={styles.footer}>
         <p style={styles.footerText}>
-          El Pinto Foods LLC © {new Date().getFullYear()}
+          El Pinto Foods © {new Date().getFullYear()}
         </p>
       </div>
     </div>
