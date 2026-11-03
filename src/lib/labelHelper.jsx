@@ -80,7 +80,7 @@ export function TagFace({ data, barcodeSvg, title }) {
             <div style={labelStyles.tagValue}>{data.poNumber || '\u2014'}</div>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={labelStyles.tagLabel}>Ship Date</div>
+            <div style={labelStyles.tagLabel}>Receive Date</div>
             <div style={labelStyles.tagValue}>{formatLabelDate(data.shipDate)}</div>
           </div>
         </div>
