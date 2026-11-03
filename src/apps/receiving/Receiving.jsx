@@ -1386,16 +1386,10 @@ function LabelPrintModal({
       uom: l.uom || '',
     };
 
-    // Barcode encodes item|description|lot|exp|qty (same for every label of
-    // this line, since scan should pop up item data regardless of case index)
-    const barcodeValue = buildBarcodeValue({
-      itemNo: l.item_no,
-      description: l.description || '',
-      lotNo: l.lot_no || '',
-      expirationDate: l.expiration_date || '',
-      qty: perLabelQty,
-    });
-    const barcodeSvg = makeBarcodeSvg(barcodeValue);
+    // Barcode encodes just the item number — scanners read it as the SKU,
+    // and everything else (lot, qty, exp) is printed on the label as text
+    // for the human receiving the goods.
+    const barcodeSvg = makeBarcodeSvg(l.item_no || '');
 
     for (let i = 0; i < casesRequested; i++) {
       const caseIndex = i + 1;
@@ -1415,6 +1409,73 @@ function LabelPrintModal({
     setTimeout(() => window.print(), 100);
   }
 
+  const [downloading, setDownloading] = useState(false);
+
+  // Walk each rendered label face in the hidden print container, snapshot
+  // it with html2canvas, and stitch into a single multi-page 4x6 PDF.
+  // Same dynamic-CDN pattern as Receiving Tags / pdfHelper so we don't
+  // need npm deps.
+  async function handleDownloadPdf() {
+    if (printQueue.length === 0 || downloading) return;
+    setDownloading(true);
+    try {
+      const [{ default: html2canvas }, jspdfMod] = await Promise.all([
+        import('https://esm.sh/html2canvas@1.4.1'),
+        import('https://esm.sh/jspdf@2.5.1'),
+      ]);
+      const { jsPDF } = jspdfMod;
+      const container = document.getElementById('receiving-labels-print');
+      if (!container) throw new Error('Label container missing');
+      const faces = container.querySelectorAll('.ship-tag-face');
+      if (faces.length === 0) throw new Error('No labels rendered yet');
+
+      // Temporarily bring the hidden container on-screen so html2canvas
+      // can measure it. We restore position after we're done.
+      const saved = {
+        position: container.style.position,
+        left: container.style.left,
+        top: container.style.top,
+      };
+      container.style.position = 'fixed';
+      container.style.left = '0';
+      container.style.top = '0';
+
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'in',
+        format: [4, 6],
+      });
+
+      try {
+        for (let i = 0; i < faces.length; i++) {
+          const canvas = await html2canvas(faces[i], {
+            scale: 2,
+            backgroundColor: '#ffffff',
+            useCORS: true,
+            logging: false,
+          });
+          const imgData = canvas.toDataURL('image/png');
+          if (i > 0) pdf.addPage([4, 6], 'portrait');
+          pdf.addImage(imgData, 'PNG', 0, 0, 4, 6);
+        }
+      } finally {
+        container.style.position = saved.position;
+        container.style.left = saved.left;
+        container.style.top = saved.top;
+      }
+
+      const safeRcpt = (header.receipt_number || 'receipt').replace(
+        /[^A-Za-z0-9_-]/g,
+        '_'
+      );
+      pdf.save(`Labels_${safeRcpt}.pdf`);
+    } catch (e) {
+      alert('Could not generate PDF: ' + (e.message || 'unknown'));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <>
       <style>{labelPrintCss('receiving-labels-print')}</style>
@@ -1428,9 +1489,9 @@ function LabelPrintModal({
           </div>
 
           <p style={styles.helpHint}>
-            One label per case, showing the units per case on the label.
-            The barcode encodes item, description, lot, expiration, and qty
-            (pipe-delimited) so a scanner can auto-fill fields.
+            One label per case. The barcode encodes the item number so a
+            scanner reads it as the SKU. Lot, expiration, and qty are
+            printed on the label as text.
           </p>
 
           {eligible.length === 0 ? (
@@ -1516,6 +1577,21 @@ function LabelPrintModal({
           <div style={styles.actionRow}>
             <button style={styles.altBtn} onClick={onClose}>
               Cancel
+            </button>
+            <button
+              style={{
+                ...styles.downloadLabelsBtn,
+                ...(totalLabels > 0 && !downloading
+                  ? {}
+                  : { background: '#d1d5db', color: '#6b7280', cursor: 'not-allowed' }),
+              }}
+              disabled={totalLabels === 0 || downloading}
+              onClick={handleDownloadPdf}
+            >
+              <Download size={18} />
+              {downloading
+                ? 'Generating...'
+                : `Download PDF (${totalLabels})`}
             </button>
             <button
               style={{
@@ -1709,6 +1785,7 @@ const styles = {
   removeLineBtn: { display: 'flex', alignItems: 'center', gap: '3px', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: '4px' },
   addLotBtn: { display: 'inline-flex', alignItems: 'center', gap: '3px', background: '#f0fdf4', color: '#065f46', border: '1px solid #99f6e4', borderRadius: '8px', padding: '4px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' },
   printLabelsBtn: { display: 'inline-flex', alignItems: 'center', gap: '3px', background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '4px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' },
+  downloadLabelsBtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#065f46', color: '#fff', border: 'none', borderRadius: '12px', padding: '13px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' },
   addLineBtn: { display: 'flex', alignItems: 'center', gap: '4px', background: '#fff1f2', color: '#c8102e', border: '1px dashed #fecdd3', borderRadius: '10px', padding: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%', justifyContent: 'center' },
 
   message: { fontSize: '14px', fontWeight: '600', marginBottom: '10px' },

@@ -13,10 +13,10 @@ export function makeBarcodeSvg(value) {
     JsBarcode(svg, String(value), {
       format: 'CODE128',
       displayValue: true,
-      fontSize: 16,
-      textMargin: 2,
-      height: 60,
-      width: 2,
+      fontSize: 22,
+      textMargin: 4,
+      height: 110,
+      width: 3,
       margin: 0,
     });
     return svg.outerHTML;
