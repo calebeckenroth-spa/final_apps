@@ -24,28 +24,20 @@ function formatDate(d) {
 }
 
 // Code128 barcode as SVG, reused in preview + every printed/exported copy.
-// Encoded value is pipe-delimited: ItemNo|Description|LotNo|ExpDate|Qty
-// so Power Apps or any scanner can parse the whole label from one scan.
-function buildBarcodeValue({ itemNo, description, lotNo, expirationDate, qty }) {
-  const parts = [
-    itemNo || '',
-    description || '',
-    lotNo || '',
-    expirationDate || '',
-    qty || '',
-  ];
-  return parts.join('|');
-}
-
+// Encodes the plain item number only — scanners read it as the SKU, which
+// is what the warehouse workflow (and downstream Power Apps / BC lookup)
+// expects. Lot / qty / exp are still printed as text on the label.
 function makeBarcodeSvg(value) {
   if (!value) return '';
   try {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     JsBarcode(svg, String(value), {
       format: 'CODE128',
-      displayValue: false, // too long to show readably when pipe-delimited
-      height: 55,
-      width: 1.6,
+      displayValue: true, // show the item number under the bars for human eyes
+      fontSize: 22,
+      textMargin: 4,
+      height: 110,
+      width: 3,
       margin: 0,
     });
     return svg.outerHTML;
@@ -97,9 +89,9 @@ function TagFace({ data, barcodeSvg, index, total, numberEach }) {
         </div>
 
         <div style={styles.tagRow}>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 2 }}>
             <div style={styles.tagLabel}>Lot #</div>
-            <div style={styles.tagValue}>{data.lotNo || '\u2014'}</div>
+            <div style={styles.tagLotNo}>{data.lotNo || '\u2014'}</div>
           </div>
           <div style={{ flex: 1 }}>
             <div style={styles.tagLabel}>Expiration</div>
@@ -295,18 +287,8 @@ export default function ReceivingTags() {
     uom,
   };
 
-  const barcodeValue = useMemo(
-    () =>
-      buildBarcodeValue({
-        itemNo: tagData.itemNo,
-        description: tagData.description,
-        lotNo: tagData.lotNo,
-        expirationDate: tagData.expirationDate,
-        qty: tagData.qty,
-      }),
-    [tagData.itemNo, tagData.description, tagData.lotNo, tagData.expirationDate, tagData.qty]
-  );
-
+  // Barcode encodes just the item number — scanners resolve it to the SKU
+  const barcodeValue = tagData.itemNo || '';
   const barcodeSvg = useMemo(() => makeBarcodeSvg(barcodeValue), [barcodeValue]);
 
   const copyCount = Math.max(1, Math.min(50, Number(copies) || 1));
@@ -673,11 +655,12 @@ const styles = {
   tagValue: { fontSize: '15px', fontWeight: '600' },
   tagRow: { display: 'flex', gap: '10px' },
   tagDivider: { borderTop: '2px solid #000', margin: '2px 0' },
-  tagItemNo: { fontSize: '26px', fontWeight: '800', lineHeight: 1 },
+  tagItemNo: { fontSize: '30px', fontWeight: '800', lineHeight: 1 },
+  tagLotNo: { fontSize: '22px', fontWeight: '800', lineHeight: 1.05, letterSpacing: '0.5px' },
   tagDesc: { fontSize: '13px', fontWeight: '500' },
   tagQtyRow: { display: 'flex', alignItems: 'baseline', gap: '8px', border: '2px solid #000', borderRadius: '6px', padding: '6px 10px' },
   tagQtyLabel: { fontSize: '12px', fontWeight: '700' },
-  tagQtyValue: { fontSize: '30px', fontWeight: '800' },
+  tagQtyValue: { fontSize: '34px', fontWeight: '800' },
   tagUom: { fontSize: '16px', fontWeight: '700' },
   tagBarcode: { marginTop: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-end' },
 };
