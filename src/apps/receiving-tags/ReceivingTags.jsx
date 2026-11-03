@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient.js';
 import JsBarcode from 'jsbarcode';
 import {
@@ -55,12 +55,18 @@ function makeBarcodeSvg(value) {
 }
 
 // ---------- the 4x6 label face (used on screen + when printing/exporting) ----------
-function TagFace({ data, barcodeSvg }) {
+function TagFace({ data, barcodeSvg, index, total, numberEach }) {
+  const showBagCount = numberEach && total && total > 1;
   return (
     <div className="recv-tag-face" style={styles.tagFace}>
       <div style={styles.tagHeader}>
         <span style={styles.tagBrand}>EL PINTO FOODS</span>
         <span style={styles.tagType}>RECEIVING TAG</span>
+        {showBagCount ? (
+          <span style={styles.tagBagBadge}>
+            {index + 1} of {total}
+          </span>
+        ) : null}
       </div>
 
       <div style={styles.tagBody}>
@@ -157,12 +163,60 @@ export default function ReceivingTags() {
     new Date().toISOString().slice(0, 10)
   );
   const [copies, setCopies] = useState(1);
+  const [numberEach, setNumberEach] = useState(false);
   const [downloading, setDownloading] = useState(false);
+
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     loadItems();
     loadRecentReceipts();
   }, []);
+
+  // If arriving with ?fromReceiptLine=<uuid>, pull that specific line from
+  // procurement.receipt_lines (joined to its header) and pre-fill the form.
+  // Copies default to the line's quantity so "5 bags = 5 labels" out of the box.
+  useEffect(() => {
+    const lineId = searchParams.get('fromReceiptLine');
+    if (!lineId) return;
+    (async () => {
+      try {
+        const { data: line, error } = await supabase
+          .schema('procurement')
+          .from('receipt_lines')
+          .select('*')
+          .eq('id', lineId)
+          .single();
+        if (error || !line) return;
+
+        const { data: header } = await supabase
+          .schema('procurement')
+          .from('receipts')
+          .select('receipt_number, vendor_name, received_date')
+          .eq('id', line.receipt_id)
+          .single();
+
+        setSelectedItemNo(line.item_no || '');
+        setDescription(line.description || '');
+        setLotNo(line.lot_no || '');
+        setExpirationDate(line.expiration_date || '');
+        setQty(String(line.quantity ?? ''));
+        setUom(line.uom || 'CASE');
+        if (header) {
+          setReceiptNo(header.receipt_number || '');
+          setVendor(header.vendor_name || '');
+          if (header.received_date) setReceivedDate(header.received_date);
+        }
+        // Default copies to the received quantity (common case: 5 bags → 5 labels)
+        const qtyNum = Number(line.quantity);
+        if (Number.isFinite(qtyNum) && qtyNum > 0) {
+          setCopies(Math.min(50, Math.round(qtyNum)));
+        }
+      } catch (e) {
+        // silent — line may be gone
+      }
+    })();
+  }, [searchParams]);
 
   async function loadItems() {
     setLoading(true);
@@ -496,14 +550,33 @@ export default function ReceivingTags() {
                   onChange={(e) => setCopies(e.target.value)}
                 />
                 <p style={styles.hint}>
-                  Use one copy per physical pallet or case.
+                  Use one copy per physical bag, case, or pallet.
+                </p>
+
+                <label style={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={numberEach}
+                    onChange={(e) => setNumberEach(e.target.checked)}
+                  />
+                  <span>Number each label ("Bag 1 of 5", "Bag 2 of 5", ...)</span>
+                </label>
+                <p style={styles.hint}>
+                  Off: every label is identical. On: each gets a sequence
+                  badge for better pallet counting and per-bag traceability.
                 </p>
               </div>
 
               {/* Live preview */}
               <div style={styles.fieldLabel}>Preview (4" × 6")</div>
               <div style={styles.previewWrap}>
-                <TagFace data={tagData} barcodeSvg={barcodeSvg} />
+                <TagFace
+                  data={tagData}
+                  barcodeSvg={barcodeSvg}
+                  index={0}
+                  total={copyCount}
+                  numberEach={numberEach}
+                />
               </div>
 
               <div style={styles.actionRow}>
@@ -542,7 +615,14 @@ export default function ReceivingTags() {
       {/* ===== Print-only copies ===== */}
       <div id="recv-tag-print">
         {Array.from({ length: copyCount }).map((_, i) => (
-          <TagFace key={i} data={tagData} barcodeSvg={barcodeSvg} />
+          <TagFace
+            key={i}
+            data={tagData}
+            barcodeSvg={barcodeSvg}
+            index={i}
+            total={copyCount}
+            numberEach={numberEach}
+          />
         ))}
       </div>
     </>
@@ -574,6 +654,7 @@ const styles = {
   input: { width: '100%', border: '1px solid #d1d5db', borderRadius: '10px', padding: '12px 14px', fontSize: '16px', boxSizing: 'border-box' },
   twoCol: { display: 'flex', gap: '12px', alignItems: 'flex-end' },
   hint: { fontSize: '12px', color: '#6b7280', marginTop: '6px' },
+  checkboxRow: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', fontSize: '14px', fontWeight: '500', color: '#374151', cursor: 'pointer' },
   previewWrap: { display: 'flex', justifyContent: 'center', padding: '16px', background: '#eef0f2', borderRadius: '12px', overflowX: 'auto', marginBottom: '16px' },
   actionRow: { display: 'flex', gap: '10px', marginBottom: '32px' },
   printBtn: { flex: 1, background: '#c8102e', color: '#fff', border: 'none', borderRadius: '12px', padding: '14px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' },
@@ -585,6 +666,7 @@ const styles = {
   tagHeader: { background: '#c8102e', color: '#fff', padding: '10px 14px', display: 'flex', flexDirection: 'column' },
   tagBrand: { fontSize: '20px', fontWeight: '800', letterSpacing: '0.5px' },
   tagType: { fontSize: '12px', fontWeight: '600', letterSpacing: '2px' },
+  tagBagBadge: { alignSelf: 'flex-end', background: '#fff', color: '#c8102e', fontSize: '14px', fontWeight: '800', padding: '3px 10px', borderRadius: '6px', marginTop: '4px' },
   tagBody: { flex: 1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' },
   tagLabel: { fontSize: '10px', fontWeight: '700', color: '#444', textTransform: 'uppercase', letterSpacing: '0.5px' },
   tagShipTo: { fontSize: '20px', fontWeight: '700', lineHeight: 1.1 },
