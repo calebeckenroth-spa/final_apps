@@ -162,8 +162,8 @@ function transform(rawRows) {
     rows.push({ _kind: 'blank' });
     rows.push({
       _kind: 'total',
-      emp_gl: 'TOTAL ',
-      employee: currentEmployee,
+      emp_gl: '',
+      employee: `TOTAL — ${currentEmployee}`,
       last_name: '',
       first_name: '',
       role: '',
@@ -258,6 +258,13 @@ async function buildXlsxBlob(rows, weekLabel) {
   // Note: SheetJS community edition has limited style support, but cell
   // .s objects on individual cells do get written to the file in a way
   // that Excel reads.
+  // Blue-ish fill for separator (blank) rows and the TOTAL rows, so it's
+  // easy to scan down the sheet and see where each employee's shifts end.
+  // Softer blue on the blank row, stronger blue + bold text on the TOTAL
+  // so the sum stands out.
+  const BLANK_FILL = 'DBEAFE';   // light blue — separator
+  const TOTAL_FILL = 'BFDBFE';   // slightly darker blue — totals
+  const TOTAL_TEXT = '1E3A8A';   // navy — strong contrast on the blue fill
   for (let i = 0; i < rows.length; i++) {
     const excelRow = i + 2; // +1 for header, +1 because Excel is 1-indexed
     if (rows[i]._kind === 'total') {
@@ -265,15 +272,15 @@ async function buildXlsxBlob(rows, weekLabel) {
         const addr = XLSX.utils.encode_cell({ r: excelRow - 1, c });
         if (!ws[addr]) ws[addr] = { t: 's', v: '' };
         ws[addr].s = {
-          fill: { fgColor: { rgb: 'FFF2CC' } },
-          font: { bold: true },
+          fill: { fgColor: { rgb: TOTAL_FILL } },
+          font: { bold: true, color: { rgb: TOTAL_TEXT }, sz: 11 },
         };
       }
     } else if (rows[i]._kind === 'blank') {
       for (let c = 0; c < header.length; c++) {
         const addr = XLSX.utils.encode_cell({ r: excelRow - 1, c });
         if (!ws[addr]) ws[addr] = { t: 's', v: '' };
-        ws[addr].s = { fill: { fgColor: { rgb: 'EFEFEF' } } };
+        ws[addr].s = { fill: { fgColor: { rgb: BLANK_FILL } } };
       }
     }
   }
