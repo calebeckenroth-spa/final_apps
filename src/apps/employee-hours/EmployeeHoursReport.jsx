@@ -343,15 +343,12 @@ async function buildXlsxBlob(rows, weekLabel) {
     footer: 0.3,
   };
   // Repeat the column header row at the top of every printed page.
-  // '1:1' is Excel's "row 1 only" notation.
   ws['!rows'] = ws['!rows'] || [];
   ws['!printHeader'] = '1:1';
-  // Header / footer strings. xlsx-js-style persists these through
-  // the sheet's HeaderFooter entry.
-  ws['!headerFooter'] = {
-    oddFooter: '&CPage &P of &N',
-    oddHeader: '&CEmployee Hours Report',
-  };
+  // Note: Page-number footers aren't reliably persisted by xlsx-js-style.
+  // Carla sets them herself in Excel (three-click one-time setup — the
+  // Carla page on the site tells her how). Once set, her Excel saves the
+  // setting, so she only does it the first time.
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Hours');
@@ -561,6 +558,38 @@ export default function EmployeeHoursReport() {
             runs in your browser — nothing gets sent anywhere.
           </p>
         </div>
+
+        <div style={styles.tipBox}>
+          <strong>Printing with page numbers (one-time setup in Excel)</strong>
+          <ol style={styles.tipList}>
+            <li>Open your downloaded Excel file.</li>
+            <li>
+              Click <strong>Insert</strong> at the top, then{' '}
+              <strong>Header &amp; Footer</strong>.
+            </li>
+            <li>
+              Excel switches to a header view. Scroll down to the bottom of
+              the page — you'll see three empty boxes. Click the{' '}
+              <strong>middle box</strong>.
+            </li>
+            <li>
+              In the Header &amp; Footer menu that appeared at the top,
+              click <strong>Page Number</strong>, then type the word
+              {' "'}of{' "'}, then click <strong>Number of Pages</strong>.
+              The box will show{' '}
+              <code style={styles.codeChip}>&amp;[Page] of &amp;[Pages]</code>.
+            </li>
+            <li>
+              Click any cell above to exit. Save the file (Ctrl+S). The
+              page numbers show when you print or in Print Preview.
+            </li>
+          </ol>
+          <p style={styles.tipFooter}>
+            Excel remembers this setting in that file. If you want it on
+            every weekly report automatically, save the file with the
+            setting applied and reuse it as your template.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -605,4 +634,8 @@ const styles = {
   linkBtn: { background: 'transparent', color: '#4338ca', border: 'none', fontSize: '13px', fontWeight: 600, marginTop: '10px', cursor: 'pointer', textDecoration: 'underline' },
 
   helpBox: { marginTop: '24px', padding: '14px 16px', background: '#f3f4f6', borderRadius: '12px', fontSize: '13px', color: '#374151' },
+  tipBox: { marginTop: '16px', padding: '16px 18px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', fontSize: '13px', color: '#1e3a8a', lineHeight: 1.5 },
+  tipList: { margin: '10px 0 10px 18px', padding: 0, lineHeight: 1.65 },
+  tipFooter: { margin: '8px 0 0', fontSize: '12px', color: '#1e40af', fontStyle: 'italic' },
+  codeChip: { background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontFamily: 'Menlo, monospace', fontSize: '12px' },
 };
