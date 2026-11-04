@@ -199,7 +199,10 @@ function transform(rawRows) {
 // We load SheetJS dynamically from the CDN at use time, matching how the
 // rest of the platform handles html2canvas / jspdf. No package.json churn.
 async function buildXlsxBlob(rows, weekLabel) {
-  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+  // xlsx-js-style is a maintained fork of SheetJS with full cell-style
+  // support (fills, fonts, borders) baked in. The community SheetJS
+  // silently drops styles, so colors never reached Excel.
+  const XLSX = await import('https://esm.sh/xlsx-js-style@1.2.0');
 
   const header = [
     'Emp GL',
