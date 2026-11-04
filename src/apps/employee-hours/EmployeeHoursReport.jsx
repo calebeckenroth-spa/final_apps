@@ -320,32 +320,41 @@ async function buildXlsxBlob(rows, weekLabel) {
     }
   }
 
-  // Print setup — landscape, fit page width to one page wide so columns
-  // don't spill, repeat the header row on each printed page, and add a
-  // "Page X of N" footer. &P / &N are Excel's page-number / total-pages
-  // format codes; they expand on print.
+  // Freeze the top row on screen so when Carla scrolls, the column
+  // headers stay visible. SheetJS encodes this through the Views array.
+  ws['!views'] = [
+    { ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' },
+  ];
+
+  // Print setup — landscape, fit page width to one page wide, repeat
+  // the header row on each printed page, and show "Page X of N" in the
+  // footer. &P / &N are Excel's page-number / total-pages format codes.
   ws['!pageSetup'] = {
     orientation: 'landscape',
     fitToWidth: 1,
     fitToHeight: 0, // 0 means "auto, as many pages tall as needed"
   };
-  ws['!printHeader'] = [1, 1]; // repeat row 1 (the column headers) on each page
   ws['!margins'] = {
     left: 0.4,
     right: 0.4,
-    top: 0.5,
-    bottom: 0.6,
+    top: 0.6,
+    bottom: 0.75,
     header: 0.2,
-    footer: 0.25,
+    footer: 0.3,
   };
-  ws['!printFooter'] = '&CPage &P of &N';
+  // Repeat the column header row at the top of every printed page.
+  // '1:1' is Excel's "row 1 only" notation.
+  ws['!rows'] = ws['!rows'] || [];
+  ws['!printHeader'] = '1:1';
+  // Header / footer strings. xlsx-js-style persists these through
+  // the sheet's HeaderFooter entry.
+  ws['!headerFooter'] = {
+    oddFooter: '&CPage &P of &N',
+    oddHeader: '&CEmployee Hours Report',
+  };
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Hours');
-
-  // Workbook-level print view: default to landscape with fit-to-width
-  if (!wb.Workbook) wb.Workbook = {};
-  if (!wb.Workbook.Views) wb.Workbook.Views = [{}];
   const wbout = XLSX.write(wb, {
     type: 'array',
     bookType: 'xlsx',
