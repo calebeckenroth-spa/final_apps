@@ -158,8 +158,9 @@ function transform(rawRows) {
 
   function emitTotal() {
     if (currentGl === null) return;
-    // Blank row first (grey highlight on the TOTAL row below it)
-    rows.push({ _kind: 'blank' });
+    // TOTAL first — sits directly under this person's last shift.
+    // Blank separator row comes after so there's visible space before
+    // the next employee's first shift.
     rows.push({
       _kind: 'total',
       emp_gl: '',
@@ -174,6 +175,7 @@ function transform(rawRows) {
       act_hrs: Math.round(groupTotal * 100) / 100,
       comments: '',
     });
+    rows.push({ _kind: 'blank' });
   }
 
   for (const s of shifts) {
