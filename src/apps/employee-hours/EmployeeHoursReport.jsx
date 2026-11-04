@@ -202,7 +202,14 @@ async function buildXlsxBlob(rows, weekLabel) {
   // xlsx-js-style is a maintained fork of SheetJS with full cell-style
   // support (fills, fonts, borders) baked in. The community SheetJS
   // silently drops styles, so colors never reached Excel.
-  const XLSX = await import('https://esm.sh/xlsx-js-style@1.2.0');
+  // The CDN build sometimes exposes utils on the module namespace and
+  // sometimes on .default, depending on how esm.sh wraps it, so we
+  // grab whichever one actually has utils.
+  const mod = await import('https://esm.sh/xlsx-js-style@1.2.0');
+  const XLSX = mod.utils ? mod : mod.default || mod;
+  if (!XLSX || !XLSX.utils) {
+    throw new Error('xlsx-js-style loaded but utils missing (CDN shape changed)');
+  }
 
   const header = [
     'Emp GL',
