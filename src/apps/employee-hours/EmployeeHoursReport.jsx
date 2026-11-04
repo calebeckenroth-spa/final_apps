@@ -144,11 +144,27 @@ function transform(rawRows) {
     });
   }
 
-  // Step 2: sort by Emp GL, then by date within the same employee
-  shifts.sort((a, b) => {
+  // Step 1.5: drop shifts with 0 hours (no-shows, unworked schedule rows,
+  // clock-ins without clock-outs that calculate to 0). Carla doesn't need
+  // them in the report — they only add page count.
+  const worked = shifts.filter((s) => (s.act_hrs || 0) > 0);
+
+  // Step 2: sort by Last Name, then First Name, then by date within the
+  // same employee. Grouping for totals still uses Emp GL (or Pin fallback)
+  // so same-name different-person employees still get separate TOTAL rows.
+  worked.sort((a, b) => {
+    const lnA = (a.last_name || '').toLowerCase();
+    const lnB = (b.last_name || '').toLowerCase();
+    if (lnA !== lnB) return lnA.localeCompare(lnB);
+    const fnA = (a.first_name || '').toLowerCase();
+    const fnB = (b.first_name || '').toLowerCase();
+    if (fnA !== fnB) return fnA.localeCompare(fnB);
     if (a._gl !== b._gl) return a._gl.localeCompare(b._gl);
     return a._dateSort - b._dateSort;
   });
+  // Replace shifts with the filtered+sorted list for downstream grouping
+  shifts.length = 0;
+  for (const s of worked) shifts.push(s);
 
   // Step 3: group and emit rows with blank + TOTAL separators
   const rows = [];
@@ -164,8 +180,8 @@ function transform(rawRows) {
     rows.push({
       _kind: 'total',
       emp_gl: '',
-      employee: `TOTAL — ${currentEmployee}`,
-      last_name: '',
+      employee: '',
+      last_name: `TOTAL — ${currentEmployee}`,
       first_name: '',
       role: '',
       wage: '',
@@ -215,7 +231,6 @@ async function buildXlsxBlob(rows, weekLabel) {
 
   const header = [
     'Emp GL',
-    'Employee',
     'Last Name',
     'First Name',
     'Role',
@@ -230,11 +245,10 @@ async function buildXlsxBlob(rows, weekLabel) {
   const aoa = [header];
   for (const r of rows) {
     if (r._kind === 'blank') {
-      aoa.push(['', '', '', '', '', '', '', '', '', '', '']);
+      aoa.push(['', '', '', '', '', '', '', '', '', '']);
     } else {
       aoa.push([
         r.emp_gl,
-        r.employee,
         r.last_name,
         r.first_name,
         r.role,
@@ -253,9 +267,8 @@ async function buildXlsxBlob(rows, weekLabel) {
   // Column widths — tuned so nothing is squished in Excel
   ws['!cols'] = [
     { wch: 10 }, // Emp GL
-    { wch: 24 }, // Employee
-    { wch: 16 }, // Last Name
-    { wch: 14 }, // First Name
+    { wch: 18 }, // Last Name
+    { wch: 16 }, // First Name
     { wch: 18 }, // Role
     { wch: 10 }, // Wage
     { wch: 12 }, // Date
@@ -307,8 +320,32 @@ async function buildXlsxBlob(rows, weekLabel) {
     }
   }
 
+  // Print setup — landscape, fit page width to one page wide so columns
+  // don't spill, repeat the header row on each printed page, and add a
+  // "Page X of N" footer. &P / &N are Excel's page-number / total-pages
+  // format codes; they expand on print.
+  ws['!pageSetup'] = {
+    orientation: 'landscape',
+    fitToWidth: 1,
+    fitToHeight: 0, // 0 means "auto, as many pages tall as needed"
+  };
+  ws['!printHeader'] = [1, 1]; // repeat row 1 (the column headers) on each page
+  ws['!margins'] = {
+    left: 0.4,
+    right: 0.4,
+    top: 0.5,
+    bottom: 0.6,
+    header: 0.2,
+    footer: 0.25,
+  };
+  ws['!printFooter'] = '&CPage &P of &N';
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Hours');
+
+  // Workbook-level print view: default to landscape with fit-to-width
+  if (!wb.Workbook) wb.Workbook = {};
+  if (!wb.Workbook.Views) wb.Workbook.Views = [{}];
   const wbout = XLSX.write(wb, {
     type: 'array',
     bookType: 'xlsx',
