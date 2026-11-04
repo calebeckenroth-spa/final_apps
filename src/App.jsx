@@ -33,6 +33,12 @@ import Receiving from './apps/receiving/Receiving.jsx';
 import POCalendar from './apps/po-calendar/POCalendar.jsx';
 import PurchaseReminders from './apps/purchase-reminders/PurchaseReminders.jsx';
 
+// Personal landing pages — a /for/<name> pattern for coworkers who only
+// need one or two tools. Keeps them away from the big Home grid so they
+// don't get overwhelmed.
+import CarlaHome from './pages/for/CarlaHome.jsx';
+import EmployeeHoursReport from './apps/employee-hours/EmployeeHoursReport.jsx';
+
 // Production suite
 import RecipeLearner from './apps/recipe-learner/RecipeLearner.jsx';
 import ProductionSchedule from './apps/production-schedule/ProductionSchedule.jsx';
@@ -80,6 +86,13 @@ export default function App() {
         <Route path="/receiving" element={<Receiving />} />
         <Route path="/po-calendar" element={<POCalendar />} />
         <Route path="/purchase-reminders" element={<PurchaseReminders />} />
+
+        {/* Personal landing pages (one-off tools for specific coworkers) */}
+        <Route path="/for/carla" element={<CarlaHome />} />
+        <Route
+          path="/for/carla/employee-hours"
+          element={<EmployeeHoursReport />}
+        />
 
         {/* Production */}
         <Route path="/recipe-learner" element={<RecipeLearner />} />
