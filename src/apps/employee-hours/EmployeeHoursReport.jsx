@@ -53,7 +53,13 @@ function fmtDateMDY(d) {
 
 function fmtTimeHHMM24(d) {
   if (!d) return '';
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  // Civilian 12-hour format with AM/PM. 0 becomes 12 (midnight),
+  // 13 becomes 1 PM, etc. Minutes always two digits.
+  const h24 = d.getHours();
+  const period = h24 >= 12 ? 'PM' : 'AM';
+  let h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:${pad2(d.getMinutes())} ${period}`;
 }
 
 // Hours between two Date objects, decimal, 2 places. Negative or null -> 0.
@@ -239,13 +245,12 @@ async function buildXlsxBlob(rows, weekLabel) {
     'Clock-In Start',
     'Clock-In End',
     'Act Hrs',
-    'Comments',
   ];
 
   const aoa = [header];
   for (const r of rows) {
     if (r._kind === 'blank') {
-      aoa.push(['', '', '', '', '', '', '', '', '', '']);
+      aoa.push(['', '', '', '', '', '', '', '', '']);
     } else {
       aoa.push([
         r.emp_gl,
@@ -257,14 +262,14 @@ async function buildXlsxBlob(rows, weekLabel) {
         r.clock_in_start,
         r.clock_in_end,
         r.act_hrs,
-        r.comments,
       ]);
     }
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  // Column widths — tuned so nothing is squished in Excel
+  // Column widths — tuned so nothing is squished in Excel. Slightly wider
+  // Clock-In columns to fit "12:34 PM" without truncation.
   ws['!cols'] = [
     { wch: 10 }, // Emp GL
     { wch: 18 }, // Last Name
@@ -272,10 +277,9 @@ async function buildXlsxBlob(rows, weekLabel) {
     { wch: 18 }, // Role
     { wch: 10 }, // Wage
     { wch: 12 }, // Date
-    { wch: 14 }, // Clock-In Start
-    { wch: 14 }, // Clock-In End
+    { wch: 15 }, // Clock-In Start
+    { wch: 15 }, // Clock-In End
     { wch: 10 }, // Act Hrs
-    { wch: 32 }, // Comments
   ];
 
   // Highlight: TOTAL rows get a light cream fill (matches Carla's sample).
