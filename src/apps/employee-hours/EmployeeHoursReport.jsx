@@ -611,6 +611,26 @@ export default function EmployeeHoursReport() {
             setting applied and reuse it as your template.
           </p>
         </div>
+
+        <div style={styles.tipBox}>
+          <strong>Keeping the column titles visible when you scroll</strong>
+          <ol style={styles.tipList}>
+            <li>Open your downloaded Excel file.</li>
+            <li>
+              Click <strong>View</strong> at the top.
+            </li>
+            <li>
+              Click <strong>Freeze Panes</strong>, then choose{' '}
+              <strong>Freeze Top Row</strong>.
+            </li>
+          </ol>
+          <p style={styles.tipFooter}>
+            Now when you scroll down the sheet, the header row
+            (Emp GL, Last Name, First Name, etc.) stays pinned at the top
+            so you always know which column you're looking at. Save the file
+            (Ctrl+S) so the setting sticks next time you open it.
+          </p>
+        </div>
       </div>
     </div>
   );
