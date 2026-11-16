@@ -324,15 +324,18 @@ async function buildXlsxBlob(rows, weekLabel) {
     }
   }
 
-  // Freeze the top row on screen so when Carla scrolls, the column
-  // headers stay visible. SheetJS encodes this through the Views array.
+  // Freeze the top row on screen so when Carla scrolls through the
+  // sheet, "Emp GL / Last Name / First Name / ..." stays visible.
+  // xlsx-js-style reads the frozen pane from BOTH !views (modern) and
+  // the first Workbook.Views entry (legacy); set both so it sticks.
   ws['!views'] = [
     { ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' },
   ];
+  // SheetJS-specific freeze helper (survives roundtrips better)
+  ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2' };
 
   // Print setup — landscape, fit page width to one page wide, repeat
-  // the header row on each printed page, and show "Page X of N" in the
-  // footer. &P / &N are Excel's page-number / total-pages format codes.
+  // the header row on each printed page.
   ws['!pageSetup'] = {
     orientation: 'landscape',
     fitToWidth: 1,
@@ -346,8 +349,8 @@ async function buildXlsxBlob(rows, weekLabel) {
     header: 0.2,
     footer: 0.3,
   };
-  // Repeat the column header row at the top of every printed page.
-  ws['!rows'] = ws['!rows'] || [];
+  // Mark row 1 as the repeat-on-every-page print header for this sheet.
+  // xlsx-js-style picks this up when writing the file.
   ws['!printHeader'] = '1:1';
   // Note: Page-number footers aren't reliably persisted by xlsx-js-style.
   // Carla sets them herself in Excel (three-click one-time setup — the
@@ -356,6 +359,20 @@ async function buildXlsxBlob(rows, weekLabel) {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Hours');
+
+  // Excel's "repeat row 1 on every printed page" is stored as a defined
+  // name called _xlnm.Print_Titles scoped to the sheet. Without this,
+  // some Excel versions ignore ws['!printHeader']. Setting Workbook.Names
+  // directly is what Excel actually reads at print time.
+  if (!wb.Workbook) wb.Workbook = {};
+  if (!wb.Workbook.Names) wb.Workbook.Names = [];
+  wb.Workbook.Names.push({
+    Name: '_xlnm.Print_Titles',
+    Sheet: 0, // scoped to the first (and only) sheet
+    Ref: "Hours!$1:$1", // rows 1 through 1
+  });
+  // Freeze pane also lives in Workbook.Views for legacy readers
+  if (!wb.Workbook.Views) wb.Workbook.Views = [{}];
   const wbout = XLSX.write(wb, {
     type: 'array',
     bookType: 'xlsx',
