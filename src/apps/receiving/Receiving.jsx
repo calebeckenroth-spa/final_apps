@@ -1670,8 +1670,8 @@ function LabelPrintModal({
           pdf.addImage(imgData, 'JPEG', 0, 0, 4, 6);
 
           // Overlay "Pallet 3 of 26" / "Case 1 of 20" / "Unit 2 of 5" above
-          // the barcode (the barcode sits in the bottom ~1" of the label,
-          // so we drop the counter at roughly y=4.8").
+          // the barcode. The barcode strip starts around y=4.5" and goes
+          // to the bottom, so we place the counter well above it at ~3.9".
           const cc = item.data.caseCounter;
           if (cc && cc.total > 1) {
             pdf.setFont('helvetica', 'bold');
@@ -1680,7 +1680,7 @@ function LabelPrintModal({
             pdf.text(
               `${cc.label || 'Case'} ${cc.index} of ${cc.total}`,
               2, // 4" wide label, center at 2"
-              4.8, // above the barcode strip
+              3.9, // clearly above the barcode
               { align: 'center' }
             );
           }
