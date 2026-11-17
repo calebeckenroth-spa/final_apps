@@ -37,6 +37,10 @@ const blankLine = () => ({
   discrepancy: '',
   notes: '',
   units_per_case: '',
+  // How many physical pallets this line arrived on. When set, the
+  // pallet-labels modal defaults label count to this number and each
+  // label shows cases_per_pallet (= quantity / pallets_received) as QTY.
+  pallets_received: '',
 });
 
 const blankReceipt = () => ({
@@ -275,6 +279,7 @@ export default function Receiving() {
         discrepancy: l.discrepancy || '',
         notes: l.notes || '',
         units_per_case: l.units_per_case ?? '',
+        pallets_received: l.pallets_received ?? '',
       }))
     );
     setMessage('');
@@ -351,6 +356,10 @@ export default function Receiving() {
             l.units_per_case === '' || l.units_per_case == null
               ? null
               : Number(l.units_per_case),
+          pallets_received:
+            l.pallets_received === '' || l.pallets_received == null
+              ? null
+              : Number(l.pallets_received),
         }));
       if (lineRows.length > 0) {
         const { error: le } = await supabase
@@ -445,11 +454,18 @@ export default function Receiving() {
       );
       return;
     }
-    // Default: one label per case received (matches "5 cases in → 5 labels")
+    // Default: one label per pallet received. If pallets_received is blank,
+    // fall back to quantity (one label per case) — the old behavior — so
+    // this still works for lines where nobody filled in pallet count.
     const defaults = {};
     for (const l of lines) {
       if (labelCounts[l._key] != null) {
         defaults[l._key] = labelCounts[l._key];
+        continue;
+      }
+      const pallets = Number(l.pallets_received);
+      if (pallets > 0) {
+        defaults[l._key] = pallets;
       } else {
         defaults[l._key] = Number(l.quantity) > 0 ? Number(l.quantity) : 1;
       }
@@ -1175,7 +1191,21 @@ function EditView({
                   placeholder="e.g. 10000 labels per case"
                 />
               </div>
-              <div style={{ flex: 1 }} />
+              <div style={{ flex: 1 }}>
+                <label style={styles.miniLabel}>
+                  Pallets received <span style={styles.optionalHint}>(for pallet labels)</span>
+                </label>
+                <input
+                  style={styles.miniInput}
+                  type="number"
+                  min="0"
+                  value={l.pallets_received}
+                  onChange={(e) =>
+                    setLine(l._key, 'pallets_received', e.target.value)
+                  }
+                  placeholder="e.g. 26"
+                />
+              </div>
             </div>
             {l.discrepancy ? (
               <>
@@ -1345,10 +1375,11 @@ function LabelPrintModal({
     (l) => (l.item_no || '').trim() && (l.lot_no || '').trim()
   );
 
-  // For each eligible line we let the user set how many cases they want a
-  // label for. Default = the quantity received (one label per case).
-  // If units_per_case is set on the line, that's what shows as the QTY on
-  // each printed label; otherwise we fall back to the raw quantity.
+  // One label per pallet. Default count = pallets_received on the line.
+  // Per-label QTY = cases_per_pallet = quantity / pallets_received, so a
+  // 520-case receipt on 26 pallets prints 26 labels at 20 cases each.
+  // Any remainder (uneven split) goes to the last pallet so cases on paper
+  // match cases received.
   const totalLabels = eligible.reduce(
     (s, l) => s + (Number(labelCounts[l._key]) || 0),
     0
@@ -1356,23 +1387,21 @@ function LabelPrintModal({
 
   const printQueue = [];
   for (const l of eligible) {
-    const casesRequested = Math.max(
+    const palletsRequested = Math.max(
       0,
       Math.min(500, Number(labelCounts[l._key]) || 0)
     );
-    if (casesRequested === 0) continue;
+    if (palletsRequested === 0) continue;
 
-    // Per-label QTY: units_per_case if provided, otherwise the raw quantity.
-    // Reason: if you have 5 cases of 10000 labels each, each printed label
-    // shows 10000, not 5. If units_per_case is blank, we assume 1 case = 1
-    // whatever-you-received and print the raw quantity.
-    const upc = Number(l.units_per_case);
-    const perLabelQty =
-      upc && upc > 0 ? upc : Number(l.quantity) || l.quantity || '';
-
-    // How many total cases we're labeling — defaults to received quantity so
-    // the case counter reads "Case 1 of 5" naturally.
-    const totalCases = Number(l.quantity) || casesRequested;
+    const totalCases = Number(l.quantity) || 0;
+    const basePerPallet =
+      palletsRequested > 0 && totalCases > 0
+        ? Math.floor(totalCases / palletsRequested)
+        : totalCases;
+    const remainder =
+      palletsRequested > 0 && totalCases > 0
+        ? totalCases - basePerPallet * palletsRequested
+        : 0;
 
     const commonData = {
       shipTo: '',
@@ -1382,8 +1411,7 @@ function LabelPrintModal({
       description: l.description || '',
       lotNo: l.lot_no || '',
       expirationDate: l.expiration_date || '',
-      qty: perLabelQty,
-      uom: l.uom || '',
+      uom: l.uom || 'CASE',
     };
 
     // Barcode encodes just the item number — scanners read it as the SKU,
@@ -1391,15 +1419,21 @@ function LabelPrintModal({
     // for the human receiving the goods.
     const barcodeSvg = makeBarcodeSvg(l.item_no || '');
 
-    for (let i = 0; i < casesRequested; i++) {
-      const caseIndex = i + 1;
+    for (let i = 0; i < palletsRequested; i++) {
+      const palletIndex = i + 1;
+      // Give the remainder (if any) to the last pallet.
+      const thisPalletQty =
+        palletIndex === palletsRequested
+          ? basePerPallet + remainder
+          : basePerPallet;
       printQueue.push({
         data: {
           ...commonData,
-          caseCounter: { index: caseIndex, total: totalCases },
+          qty: thisPalletQty || totalCases,
+          caseCounter: { index: palletIndex, total: palletsRequested },
         },
         barcodeSvg,
-        key: `${l._key}-${caseIndex}`,
+        key: `${l._key}-${palletIndex}`,
       });
     }
   }
@@ -1482,16 +1516,17 @@ function LabelPrintModal({
       <div className="screen-only" style={styles.overlay}>
         <div style={{ ...styles.modal, maxHeight: '90vh' }}>
           <div style={styles.modalHead}>
-            <span style={styles.modalTitle}>Print case labels</span>
+            <span style={styles.modalTitle}>Print pallet labels</span>
             <button style={styles.iconBtn} onClick={onClose}>
               <X size={18} />
             </button>
           </div>
 
           <p style={styles.helpHint}>
-            One label per case. The barcode encodes the item number so a
-            scanner reads it as the SKU. Lot, expiration, and qty are
-            printed on the label as text.
+            One label per pallet. The count defaults to the "Pallets
+            received" you entered on each line. Each label's QTY is the
+            cases on that pallet (cases ÷ pallets). The barcode encodes
+            the item number for scanning.
           </p>
 
           {eligible.length === 0 ? (
@@ -1502,8 +1537,25 @@ function LabelPrintModal({
             <div style={styles.labelListWrap}>
               {eligible.map((l) => {
                 const cases = Number(l.quantity) || 0;
-                const upc = Number(l.units_per_case) || 0;
-                const perLabel = upc > 0 ? upc : cases;
+                const palletsOnLine = Number(l.pallets_received) || 0;
+                const labelCount =
+                  Number(labelCounts[l._key]) ||
+                  (palletsOnLine > 0 ? palletsOnLine : cases) ||
+                  0;
+                // Per-pallet share. Remainder (if cases/pallets isn't exact)
+                // rides on the last pallet.
+                const basePerPallet =
+                  labelCount > 0 && cases > 0
+                    ? Math.floor(cases / labelCount)
+                    : cases;
+                const remainder =
+                  labelCount > 0 && cases > 0
+                    ? cases - basePerPallet * labelCount
+                    : 0;
+                const qtyLabel =
+                  labelCount > 1 && remainder > 0
+                    ? `${basePerPallet} / ${basePerPallet + remainder} on last`
+                    : String(basePerPallet || cases || '—');
                 return (
                   <div key={l._key} style={styles.labelRow}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -1514,25 +1566,28 @@ function LabelPrintModal({
                       </div>
                       <div style={styles.labelRowMeta}>
                         Received: <strong>{cases}</strong> {l.uom || 'CASE'}
-                        {upc > 0 ? (
+                        {palletsOnLine > 0 ? (
                           <>
                             {' '}
-                            · <strong>{upc.toLocaleString()}</strong> per case
+                            on <strong>{palletsOnLine}</strong> pallets
                           </>
                         ) : null}
                       </div>
                       <div style={styles.labelRowMeta}>
-                        Each label will show QTY = <strong>{perLabel || '—'}</strong>
+                        Each pallet label QTY = <strong>{qtyLabel}</strong>
                       </div>
                     </div>
                     <div style={styles.labelCountArea}>
-                      <label style={styles.miniLabel}># labels (= cases)</label>
+                      <label style={styles.miniLabel}># pallet labels</label>
                       <input
                         style={styles.labelCountInput}
                         type="number"
                         min="0"
                         max="500"
-                        value={labelCounts[l._key] ?? cases}
+                        value={
+                          labelCounts[l._key] ??
+                          (palletsOnLine > 0 ? palletsOnLine : cases)
+                        }
                         onChange={(e) =>
                           setLabelCounts({
                             ...labelCounts,
@@ -1549,7 +1604,19 @@ function LabelPrintModal({
                         >
                           1
                         </button>
-                        {cases ? (
+                        {palletsOnLine ? (
+                          <button
+                            style={styles.quickBtn}
+                            onClick={() =>
+                              setLabelCounts({
+                                ...labelCounts,
+                                [l._key]: palletsOnLine,
+                              })
+                            }
+                          >
+                            {palletsOnLine}
+                          </button>
+                        ) : cases ? (
                           <button
                             style={styles.quickBtn}
                             onClick={() =>
