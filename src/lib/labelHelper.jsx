@@ -114,7 +114,7 @@ export function TagFace({ data, barcodeSvg, title }) {
         </div>
 
         {cc && cc.total > 1 ? (
-          <div style={labelStyles.tagCaseCounter}>
+          <div className="label-counter" style={labelStyles.tagCaseCounter}>
             {cc.label || 'Case'} {cc.index} of {cc.total}
           </div>
         ) : null}

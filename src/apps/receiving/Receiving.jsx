@@ -1617,21 +1617,77 @@ function LabelPrintModal({
       const yieldToBrowser = () =>
         new Promise((resolve) => setTimeout(resolve, 0));
 
+      // Big speed win: all N labels for one line are visually identical
+      // except for the "Pallet X of N" counter. Render each unique body
+      // ONCE with html2canvas (hiding the counter so the same image can
+      // be reused for every page), then overlay the per-page counter with
+      // pdf.text(). For 26 identical pallets: 1 render instead of 26.
+      //
+      // The cache key is the matching queue entry's body fields; two pages
+      // with the same key share the image. The counter overlay is drawn on
+      // every page even when i === 0 so positions stay consistent.
+      const imageCache = new Map();
+      const cacheKeyFor = (item) =>
+        JSON.stringify({
+          itemNo: item.data.itemNo,
+          desc: item.data.description,
+          lot: item.data.lotNo,
+          exp: item.data.expirationDate,
+          qty: item.data.qty,
+          uom: item.data.uom,
+          poNumber: item.data.poNumber,
+          shipDate: item.data.shipDate,
+        });
+
       setProgress({ done: 0, total: faces.length });
       try {
         for (let i = 0; i < faces.length; i++) {
-          const canvas = await html2canvas(faces[i], {
-            scale: 1.5,
-            backgroundColor: '#ffffff',
-            useCORS: true,
-            logging: false,
-          });
-          const imgData = canvas.toDataURL('image/jpeg', 0.92);
+          const item = printQueue[i];
+          const key = cacheKeyFor(item);
+          let imgData = imageCache.get(key);
+          if (!imgData) {
+            // Hide the counter in this face before rendering so the cached
+            // image has no counter — we draw the per-page counter as text
+            // on top. Different pages of the same line share one image.
+            const counterEl = faces[i].querySelector('.label-counter');
+            const prevVis = counterEl ? counterEl.style.visibility : null;
+            if (counterEl) counterEl.style.visibility = 'hidden';
+            try {
+              const canvas = await html2canvas(faces[i], {
+                scale: 1.5,
+                backgroundColor: '#ffffff',
+                useCORS: true,
+                logging: false,
+              });
+              imgData = canvas.toDataURL('image/jpeg', 0.92);
+              imageCache.set(key, imgData);
+            } finally {
+              if (counterEl) counterEl.style.visibility = prevVis || '';
+            }
+          }
+
           if (i > 0) pdf.addPage([4, 6], 'portrait');
           pdf.addImage(imgData, 'JPEG', 0, 0, 4, 6);
+
+          // Overlay "Pallet 3 of 26" / "Case 1 of 20" / "Unit 2 of 5" at the
+          // bottom center of the label, matching where the DOM renders it.
+          const cc = item.data.caseCounter;
+          if (cc && cc.total > 1) {
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(11);
+            pdf.setTextColor(0, 0, 0);
+            pdf.text(
+              `${cc.label || 'Case'} ${cc.index} of ${cc.total}`,
+              2, // 4" wide label, center at 2"
+              5.15, // just above the barcode
+              { align: 'center' }
+            );
+          }
+
           setProgress({ done: i + 1, total: faces.length });
-          // Give React a tick to repaint the progress label before next
-          await yieldToBrowser();
+          // Give React a tick to repaint the progress label before next.
+          // Cache hits are almost instant so yielding here still feels quick.
+          if (i % 4 === 0) await yieldToBrowser();
         }
       } finally {
         container.style.position = saved.position;
