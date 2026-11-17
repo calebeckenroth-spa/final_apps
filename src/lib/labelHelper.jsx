@@ -56,8 +56,9 @@ function formatLabelDate(d) {
 // The 4x6 label face. `data` fields (all optional):
 //   shipTo, poNumber, shipDate, itemNo, description,
 //   lotNo, expirationDate, qty, uom, caseCounter
-// `caseCounter` (optional): { index: 1, total: 5 } renders "Case 1 of 5"
-//   below the QTY row so operators know which case they are looking at.
+// `caseCounter` (optional): { index: 1, total: 5, label?: "Case"|"Pallet"|... }
+//   renders "<label> 1 of 5" below the QTY row so operators know which
+//   unit they are looking at. Defaults to "Case" for backward compatibility.
 // `title` overrides the "SHIPPING TAG" line — pass "RECEIVING TAG" for inbound.
 export function TagFace({ data, barcodeSvg, title }) {
   const cc = data.caseCounter;
@@ -80,7 +81,7 @@ export function TagFace({ data, barcodeSvg, title }) {
             <div style={labelStyles.tagValue}>{data.poNumber || '\u2014'}</div>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={labelStyles.tagLabel}>Receive Date</div>
+            <div style={labelStyles.tagLabel}>Ship Date</div>
             <div style={labelStyles.tagValue}>{formatLabelDate(data.shipDate)}</div>
           </div>
         </div>
@@ -114,7 +115,7 @@ export function TagFace({ data, barcodeSvg, title }) {
 
         {cc && cc.total > 1 ? (
           <div style={labelStyles.tagCaseCounter}>
-            Case {cc.index} of {cc.total}
+            {cc.label || 'Case'} {cc.index} of {cc.total}
           </div>
         ) : null}
 

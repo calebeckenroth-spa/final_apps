@@ -41,6 +41,13 @@ const blankLine = () => ({
   // pallet-labels modal defaults label count to this number and each
   // label shows cases_per_pallet (= quantity / pallets_received) as QTY.
   pallets_received: '',
+  // How labels for this line are printed: 'pallet' (one per pallet, qty =
+  // cases per pallet), 'case' (one per case, qty = units_per_case or 1),
+  // or 'weight' (one per unit, qty = lbs_per_unit — for raw materials
+  // like salt where 5 bags × 25 lb matters, not case counts).
+  label_mode: 'pallet',
+  // Pounds per unit for the weight label mode (e.g. 25 for 25-lb salt bags).
+  lbs_per_unit: '',
 });
 
 const blankReceipt = () => ({
@@ -280,6 +287,8 @@ export default function Receiving() {
         notes: l.notes || '',
         units_per_case: l.units_per_case ?? '',
         pallets_received: l.pallets_received ?? '',
+        label_mode: l.label_mode || 'pallet',
+        lbs_per_unit: l.lbs_per_unit ?? '',
       }))
     );
     setMessage('');
@@ -360,6 +369,11 @@ export default function Receiving() {
             l.pallets_received === '' || l.pallets_received == null
               ? null
               : Number(l.pallets_received),
+          label_mode: l.label_mode || null,
+          lbs_per_unit:
+            l.lbs_per_unit === '' || l.lbs_per_unit == null
+              ? null
+              : Number(l.lbs_per_unit),
         }));
       if (lineRows.length > 0) {
         const { error: le } = await supabase
@@ -454,20 +468,23 @@ export default function Receiving() {
       );
       return;
     }
-    // Default: one label per pallet received. If pallets_received is blank,
-    // fall back to quantity (one label per case) — the old behavior — so
-    // this still works for lines where nobody filled in pallet count.
+    // Default label count depends on the line's chosen mode:
+    // - 'pallet' (default): pallets_received, else quantity, else 1
+    // - 'case': quantity, else 1
+    // - 'weight': quantity (one label per unit — bag, drum, etc.)
     const defaults = {};
     for (const l of lines) {
       if (labelCounts[l._key] != null) {
         defaults[l._key] = labelCounts[l._key];
         continue;
       }
-      const pallets = Number(l.pallets_received);
-      if (pallets > 0) {
-        defaults[l._key] = pallets;
+      const mode = l.label_mode || 'pallet';
+      const q = Number(l.quantity) > 0 ? Number(l.quantity) : 1;
+      if (mode === 'pallet') {
+        const pallets = Number(l.pallets_received);
+        defaults[l._key] = pallets > 0 ? pallets : q;
       } else {
-        defaults[l._key] = Number(l.quantity) > 0 ? Number(l.quantity) : 1;
+        defaults[l._key] = q;
       }
     }
     setLabelCounts(defaults);
@@ -1207,6 +1224,40 @@ function EditView({
                 />
               </div>
             </div>
+            <div style={styles.twoCol}>
+              <div style={{ flex: 1 }}>
+                <label style={styles.miniLabel}>Label by</label>
+                <select
+                  style={styles.miniInput}
+                  value={l.label_mode || 'pallet'}
+                  onChange={(e) => setLine(l._key, 'label_mode', e.target.value)}
+                >
+                  <option value="pallet">Pallet (one per pallet)</option>
+                  <option value="case">Case (one per case)</option>
+                  <option value="weight">Pound (one per unit, by weight)</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                {l.label_mode === 'weight' ? (
+                  <>
+                    <label style={styles.miniLabel}>
+                      Pounds per unit <span style={styles.optionalHint}>(e.g. 25-lb bag)</span>
+                    </label>
+                    <input
+                      style={styles.miniInput}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={l.lbs_per_unit}
+                      onChange={(e) =>
+                        setLine(l._key, 'lbs_per_unit', e.target.value)
+                      }
+                      placeholder="e.g. 25"
+                    />
+                  </>
+                ) : null}
+              </div>
+            </div>
             {l.discrepancy ? (
               <>
                 <label style={styles.miniLabel}>Discrepancy note</label>
@@ -1387,21 +1438,48 @@ function LabelPrintModal({
 
   const printQueue = [];
   for (const l of eligible) {
-    const palletsRequested = Math.max(
+    const labelsRequested = Math.max(
       0,
       Math.min(500, Number(labelCounts[l._key]) || 0)
     );
-    if (palletsRequested === 0) continue;
+    if (labelsRequested === 0) continue;
 
+    const mode = l.label_mode || 'pallet';
     const totalCases = Number(l.quantity) || 0;
-    const basePerPallet =
-      palletsRequested > 0 && totalCases > 0
-        ? Math.floor(totalCases / palletsRequested)
-        : totalCases;
-    const remainder =
-      palletsRequested > 0 && totalCases > 0
-        ? totalCases - basePerPallet * palletsRequested
-        : 0;
+
+    // Mode decides per-label QTY, label UoM, and the counter word.
+    let basePerLabel = 0;
+    let remainder = 0;
+    let labelUom = l.uom || 'CASE';
+    let counterLabel = 'Case';
+    if (mode === 'pallet') {
+      // 520 cases / 26 pallets = 20 cases per label; remainder on last.
+      basePerLabel =
+        labelsRequested > 0 && totalCases > 0
+          ? Math.floor(totalCases / labelsRequested)
+          : totalCases;
+      remainder =
+        labelsRequested > 0 && totalCases > 0
+          ? totalCases - basePerLabel * labelsRequested
+          : 0;
+      labelUom = l.uom || 'CASE';
+      counterLabel = 'Pallet';
+    } else if (mode === 'weight') {
+      // Pound mode: each label represents one unit (bag, drum) and shows
+      // its weight. For 5 salt bags of 25 lb each, 5 labels at "25 lb".
+      const lbs = Number(l.lbs_per_unit) || 0;
+      basePerLabel = lbs > 0 ? lbs : totalCases;
+      remainder = 0;
+      labelUom = 'LB';
+      counterLabel = 'Unit';
+    } else {
+      // Case mode: one label per case. QTY = units_per_case if set, else 1.
+      const upc = Number(l.units_per_case) || 0;
+      basePerLabel = upc > 0 ? upc : 1;
+      remainder = 0;
+      labelUom = upc > 0 ? l.uom || 'EA' : l.uom || 'CASE';
+      counterLabel = 'Case';
+    }
 
     const commonData = {
       shipTo: '',
@@ -1411,7 +1489,7 @@ function LabelPrintModal({
       description: l.description || '',
       lotNo: l.lot_no || '',
       expirationDate: l.expiration_date || '',
-      uom: l.uom || 'CASE',
+      uom: labelUom,
     };
 
     // Barcode encodes just the item number — scanners read it as the SKU,
@@ -1419,21 +1497,24 @@ function LabelPrintModal({
     // for the human receiving the goods.
     const barcodeSvg = makeBarcodeSvg(l.item_no || '');
 
-    for (let i = 0; i < palletsRequested; i++) {
-      const palletIndex = i + 1;
-      // Give the remainder (if any) to the last pallet.
-      const thisPalletQty =
-        palletIndex === palletsRequested
-          ? basePerPallet + remainder
-          : basePerPallet;
+    for (let i = 0; i < labelsRequested; i++) {
+      const idx = i + 1;
+      // Give the remainder (if any) to the last label so on-paper total
+      // matches cases received.
+      const thisQty =
+        idx === labelsRequested ? basePerLabel + remainder : basePerLabel;
       printQueue.push({
         data: {
           ...commonData,
-          qty: thisPalletQty || totalCases,
-          caseCounter: { index: palletIndex, total: palletsRequested },
+          qty: thisQty || totalCases,
+          caseCounter: {
+            index: idx,
+            total: labelsRequested,
+            label: counterLabel,
+          },
         },
         barcodeSvg,
-        key: `${l._key}-${palletIndex}`,
+        key: `${l._key}-${idx}`,
       });
     }
   }
@@ -1444,11 +1525,18 @@ function LabelPrintModal({
   }
 
   const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
 
   // Walk each rendered label face in the hidden print container, snapshot
   // it with html2canvas, and stitch into a single multi-page 4x6 PDF.
   // Same dynamic-CDN pattern as Receiving Tags / pdfHelper so we don't
   // need npm deps.
+  //
+  // Speed notes: scale 1.5 gives crisp labels at thermal-printer resolution
+  // without the 4x cost of scale 2. JPEG with quality 0.92 compresses the
+  // mostly-white labels ~10x smaller than PNG, so pdf.addImage and the
+  // final save are noticeably faster for runs of 20+ labels. A short yield
+  // between labels keeps React responsive so the progress indicator updates.
   async function handleDownloadPdf() {
     if (printQueue.length === 0 || downloading) return;
     setDownloading(true);
@@ -1480,17 +1568,24 @@ function LabelPrintModal({
         format: [4, 6],
       });
 
+      const yieldToBrowser = () =>
+        new Promise((resolve) => setTimeout(resolve, 0));
+
+      setProgress({ done: 0, total: faces.length });
       try {
         for (let i = 0; i < faces.length; i++) {
           const canvas = await html2canvas(faces[i], {
-            scale: 2,
+            scale: 1.5,
             backgroundColor: '#ffffff',
             useCORS: true,
             logging: false,
           });
-          const imgData = canvas.toDataURL('image/png');
+          const imgData = canvas.toDataURL('image/jpeg', 0.92);
           if (i > 0) pdf.addPage([4, 6], 'portrait');
-          pdf.addImage(imgData, 'PNG', 0, 0, 4, 6);
+          pdf.addImage(imgData, 'JPEG', 0, 0, 4, 6);
+          setProgress({ done: i + 1, total: faces.length });
+          // Give React a tick to repaint the progress label before next
+          await yieldToBrowser();
         }
       } finally {
         container.style.position = saved.position;
@@ -1507,6 +1602,7 @@ function LabelPrintModal({
       alert('Could not generate PDF: ' + (e.message || 'unknown'));
     } finally {
       setDownloading(false);
+      setProgress({ done: 0, total: 0 });
     }
   }
 
@@ -1538,24 +1634,43 @@ function LabelPrintModal({
               {eligible.map((l) => {
                 const cases = Number(l.quantity) || 0;
                 const palletsOnLine = Number(l.pallets_received) || 0;
+                const mode = l.label_mode || 'pallet';
+                const lbs = Number(l.lbs_per_unit) || 0;
+                const upc = Number(l.units_per_case) || 0;
+                // Default count matches openLabelModal's logic.
+                const defaultCount =
+                  mode === 'pallet'
+                    ? palletsOnLine > 0
+                      ? palletsOnLine
+                      : cases || 1
+                    : cases || 1;
                 const labelCount =
-                  Number(labelCounts[l._key]) ||
-                  (palletsOnLine > 0 ? palletsOnLine : cases) ||
-                  0;
-                // Per-pallet share. Remainder (if cases/pallets isn't exact)
-                // rides on the last pallet.
-                const basePerPallet =
-                  labelCount > 0 && cases > 0
-                    ? Math.floor(cases / labelCount)
-                    : cases;
-                const remainder =
-                  labelCount > 0 && cases > 0
-                    ? cases - basePerPallet * labelCount
-                    : 0;
-                const qtyLabel =
-                  labelCount > 1 && remainder > 0
-                    ? `${basePerPallet} / ${basePerPallet + remainder} on last`
-                    : String(basePerPallet || cases || '—');
+                  Number(labelCounts[l._key]) || defaultCount || 0;
+
+                // Preview text differs by mode.
+                let qtyPreview = '—';
+                let unitWord = 'label';
+                if (mode === 'pallet') {
+                  const base =
+                    labelCount > 0 && cases > 0
+                      ? Math.floor(cases / labelCount)
+                      : cases;
+                  const rem =
+                    labelCount > 0 && cases > 0
+                      ? cases - base * labelCount
+                      : 0;
+                  qtyPreview =
+                    labelCount > 1 && rem > 0
+                      ? `${base} / ${base + rem} on last`
+                      : String(base || cases || '—');
+                  unitWord = 'pallet label';
+                } else if (mode === 'weight') {
+                  qtyPreview = lbs > 0 ? `${lbs} LB` : '— LB';
+                  unitWord = 'unit label';
+                } else {
+                  qtyPreview = upc > 0 ? String(upc) : '1';
+                  unitWord = 'case label';
+                }
                 return (
                   <div key={l._key} style={styles.labelRow}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -1574,20 +1689,18 @@ function LabelPrintModal({
                         ) : null}
                       </div>
                       <div style={styles.labelRowMeta}>
-                        Each pallet label QTY = <strong>{qtyLabel}</strong>
+                        Mode: <strong>{mode}</strong> · Each {unitWord} QTY ={' '}
+                        <strong>{qtyPreview}</strong>
                       </div>
                     </div>
                     <div style={styles.labelCountArea}>
-                      <label style={styles.miniLabel}># pallet labels</label>
+                      <label style={styles.miniLabel}># {unitWord}s</label>
                       <input
                         style={styles.labelCountInput}
                         type="number"
                         min="0"
                         max="500"
-                        value={
-                          labelCounts[l._key] ??
-                          (palletsOnLine > 0 ? palletsOnLine : cases)
-                        }
+                        value={labelCounts[l._key] ?? defaultCount}
                         onChange={(e) =>
                           setLabelCounts({
                             ...labelCounts,
@@ -1657,7 +1770,9 @@ function LabelPrintModal({
             >
               <Download size={18} />
               {downloading
-                ? 'Generating...'
+                ? progress.total > 0
+                  ? `Rendering ${progress.done} of ${progress.total}...`
+                  : 'Starting...'
                 : `Download PDF (${totalLabels})`}
             </button>
             <button
