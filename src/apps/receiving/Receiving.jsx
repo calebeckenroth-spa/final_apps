@@ -291,6 +291,20 @@ export default function Receiving() {
         lbs_per_unit: l.lbs_per_unit ?? '',
       }))
     );
+    // When opening an existing receipt that was built against a PO, also
+    // pull in that PO's lines so the "expected qty" placeholder shows in
+    // each receipt line's Qty received box.
+    if (r.po_id) {
+      const { data: poLineRows } = await supabase
+        .schema('procurement')
+        .from('po_lines')
+        .select('*')
+        .eq('po_id', r.po_id)
+        .order('line_no');
+      setPoLinesForSelectedPo(poLineRows || []);
+    } else {
+      setPoLinesForSelectedPo([]);
+    }
     setMessage('');
     setConfirmDelete(false);
     setView('edit');
@@ -601,6 +615,7 @@ export default function Receiving() {
             removeLine={removeLine}
             vendors={vendors}
             pos={pos}
+            poLinesForSelectedPo={poLinesForSelectedPo}
             selectPo={selectPo}
             saving={saving}
             message={message}
@@ -971,6 +986,7 @@ function EditView({
   removeLine,
   vendors,
   pos,
+  poLinesForSelectedPo,
   selectPo,
   saving,
   message,
@@ -985,6 +1001,19 @@ function EditView({
   onClearSignature,
   onPrintLabels,
 }) {
+  // Build { po_line_id -> expected quantity } so each receipt line can show
+  // its ordered amount as a greyed-out placeholder in the Qty received box.
+  // Falls back to item_no match when po_line_id isn't set (user added the
+  // line by hand after the PO was linked).
+  const poExpectedByLine = useMemo(() => {
+    const byId = new Map();
+    const byItem = new Map();
+    for (const pl of poLinesForSelectedPo || []) {
+      if (pl.id != null) byId.set(pl.id, pl.quantity);
+      if (pl.item_no) byItem.set(pl.item_no, pl.quantity);
+    }
+    return { byId, byItem };
+  }, [poLinesForSelectedPo]);
   return (
     <>
       <div style={styles.section}>
@@ -1114,7 +1143,14 @@ function EditView({
             {lines.length} line{lines.length === 1 ? '' : 's'}
           </span>
         </div>
-        {lines.map((l) => (
+        {lines.map((l) => {
+          // Expected qty from the PO, if any. Prefer the direct po_line_id
+          // link; fall back to matching by item_no for hand-added lines.
+          const expectedQty =
+            (l.po_line_id && poExpectedByLine.byId.get(l.po_line_id)) ||
+            (l.item_no && poExpectedByLine.byItem.get(l.item_no)) ||
+            null;
+          return (
           <div key={l._key} style={styles.lineCard}>
             <div style={styles.twoCol}>
               <div style={{ flex: 1 }}>
@@ -1138,11 +1174,20 @@ function EditView({
             </div>
             <div style={styles.twoCol}>
               <div style={{ flex: 1 }}>
-                <label style={styles.miniLabel}>Qty received</label>
+                <label style={styles.miniLabel}>
+                  Qty received
+                  {expectedQty != null ? (
+                    <span style={styles.expectedHint}>
+                      {' '}
+                      · expecting <strong>{expectedQty}</strong>
+                    </span>
+                  ) : null}
+                </label>
                 <input
                   style={styles.miniInput}
                   type="number"
                   value={l.quantity}
+                  placeholder={expectedQty != null ? String(expectedQty) : ''}
                   onChange={(e) => setLine(l._key, 'quantity', e.target.value)}
                 />
               </div>
@@ -1317,7 +1362,8 @@ function EditView({
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
         <button style={styles.addLineBtn} onClick={addLine}>
           <Plus size={14} /> Add line
         </button>
@@ -1963,6 +2009,7 @@ const styles = {
   lineCard: { border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px', marginBottom: '8px', background: '#fafafa' },
   miniLabel: { display: 'block', fontSize: '11px', fontWeight: 600, color: '#6b7280', marginBottom: '2px', marginTop: '6px' },
   optionalHint: { fontSize: '10px', fontWeight: 500, color: '#9ca3af', fontStyle: 'italic' },
+  expectedHint: { fontSize: '10px', fontWeight: 600, color: '#9ca3af' },
   miniInput: { width: '100%', border: '1px solid #d1d5db', borderRadius: '8px', padding: '6px 8px', fontSize: '13px', boxSizing: 'border-box', background: '#fff' },
   removeLineBtn: { display: 'flex', alignItems: 'center', gap: '3px', background: 'transparent', color: '#c8102e', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: '4px' },
   addLotBtn: { display: 'inline-flex', alignItems: 'center', gap: '3px', background: '#f0fdf4', color: '#065f46', border: '1px solid #99f6e4', borderRadius: '8px', padding: '4px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' },
